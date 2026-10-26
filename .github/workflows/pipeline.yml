@@ -41,7 +41,8 @@ env:
   DATABASE_URL: postgresql+asyncpg://dkbot:dkbot@localhost:5432/dkbot
   PGURL: postgresql://dkbot:dkbot@localhost:5432/dkbot
   STATE_PATH: state/state.json
-  CONTACT_EMAIL: ${{ github.repository_owner }}@users.noreply.github.com
+  # NB: keep the HTTP User-Agent generic - ESPN's firewall rejects UAs containing some words
+  # (e.g. names of security scanners), so the repo owner's name is deliberately not used in it.
 
 jobs:
   plan:
