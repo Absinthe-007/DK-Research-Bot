@@ -387,7 +387,14 @@ NFL_FIELDS = {
     "rushing": {"rushingAttempts": "carries", "rushingYards": "rush_yds", "rushingTouchdowns": "rush_tds"},
     "receiving": {"receptions": "receptions", "receivingYards": "rec_yds", "receivingTouchdowns": "rec_tds",
                   "receivingTargets": "targets"},
+    "defensive": {"totalTackles": "tackles", "sacks": "sacks", "tacklesForLoss": "tfl", "passesDefended": "passes_defended",
+                  "QBHits": "qb_hits"},
+    "interceptions": {"interceptions": "def_int"},
+    "kicking": {"fieldGoalsMade/fieldGoalAttempts": ("fgm", "fga"), "extraPointsMade/extraPointAttempts": ("xpm", None)},
 }
+NFL_STAT_COLS = ("completions", "pass_attempts", "pass_yds", "pass_tds", "interceptions", "sacks_taken", "carries",
+                 "rush_yds", "rush_tds", "targets", "receptions", "rec_yds", "rec_tds", "tackles", "sacks", "tfl",
+                 "qb_hits", "passes_defended", "def_int", "fgm", "fga", "xpm")
 
 
 def parse_nfl_box(summary: dict) -> list[dict]:
@@ -453,9 +460,7 @@ async def sync_boxscores(sport: str, limit: int = 400) -> int:
                                     **{k: r[k] for k in ("starter", "minutes", "pts", "reb", "oreb", "ast", "fg3m",
                                                          "stl", "blk", "tov", "fga", "fta", "plus_minus")}))
                 else:
-                    stats = {k: r.get(k, 0.0) for k in ("completions", "pass_attempts", "pass_yds", "pass_tds",
-                                                        "interceptions", "sacks_taken", "carries", "rush_yds", "rush_tds",
-                                                        "targets", "receptions", "rec_yds", "rec_tds")}
+                    stats = {k: r.get(k, 0.0) for k in NFL_STAT_COLS}
                     out.append(dict(base, season=int(g.season), week=g.week or 0, position=r.get("position"), **stats))
             model = NbaPlayerGamelog if sport == "NBA" else NflPlayerGame
             n += await upsert(s, model, out, ["player_id", "game_id"])

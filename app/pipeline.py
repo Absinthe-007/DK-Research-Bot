@@ -20,6 +20,7 @@ from sqlalchemy import text
 from app import planner
 from app.db.base import session_scope
 from app.engine.grade import grade
+from app.engine import statboard
 from app.engine.scanner import scan
 from app.export import export
 from app.ingestion import espn, injuries, rest, weather
@@ -53,7 +54,8 @@ async def refresh(sport: str) -> None:
     if sport == "NFL":
         await _safe(weather.sync_weather)
     await espn.sync_props(sport, hours_ahead=30 if sport == "NBA" else 80)
-    await scan(sport)
+    await _safe(scan, sport)          # market anchors (prices are used internally only)
+    await statboard.build(sport)       # expected box-score line for every player
     state = planner.load_state()
     state[f"last_refresh_{sport}"] = datetime.now(timezone.utc).isoformat()
     planner.save_state(state)
@@ -65,7 +67,8 @@ async def nightly() -> None:
         await _ensure_teams(sport)
         await espn.sync_schedule(sport, today - timedelta(days=4), today + timedelta(days=10))
         await espn.sync_boxscores(sport)
-        await grade(sport)
+        await _safe(grade, sport)
+        await statboard.grade(sport)
         if today.weekday() == 1:          # Tuesday: refresh rosters (trades, signings)
             await _safe(espn.sync_rosters, sport)
     if today.weekday() in (1, 4):          # NFL enrichment after MNF / TNF
@@ -106,7 +109,7 @@ async def backfill(sport: str, start: date, end: date) -> None:
 
 async def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["plan", "refresh", "nightly", "backfill", "export", "scan", "grade"])
+    ap.add_argument("cmd", choices=["plan", "refresh", "nightly", "backfill", "export", "scan", "grade", "statboard"])
     ap.add_argument("--sport", choices=["NBA", "NFL"])
     ap.add_argument("--start", type=date.fromisoformat)
     ap.add_argument("--end", type=date.fromisoformat)
@@ -127,6 +130,8 @@ async def main() -> None:
         await backfill(a.sport, a.start, a.end)
     elif a.cmd == "scan":
         await scan(a.sport)
+    elif a.cmd == "statboard":
+        await statboard.build(a.sport)
     elif a.cmd == "grade":
         await grade(a.sport)
     print(await export())

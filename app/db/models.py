@@ -127,6 +127,16 @@ class NflPlayerGame(Base):
     receptions: Mapped[float] = mapped_column(Float, server_default="0")
     rec_yds: Mapped[float] = mapped_column(Float, server_default="0")
     rec_tds: Mapped[float] = mapped_column(Float, server_default="0")
+    # defense / kicking
+    tackles: Mapped[float] = mapped_column(Float, server_default="0")
+    sacks: Mapped[float] = mapped_column(Float, server_default="0")
+    tfl: Mapped[float] = mapped_column(Float, server_default="0")
+    qb_hits: Mapped[float] = mapped_column(Float, server_default="0")
+    passes_defended: Mapped[float] = mapped_column(Float, server_default="0")
+    def_int: Mapped[float] = mapped_column(Float, server_default="0")
+    fgm: Mapped[float] = mapped_column(Float, server_default="0")
+    fga: Mapped[float] = mapped_column(Float, server_default="0")
+    xpm: Mapped[float] = mapped_column(Float, server_default="0")
     # optional nflverse enrichment
     offense_snap_pct: Mapped[float | None] = mapped_column(Float)
     air_yards: Mapped[float | None] = mapped_column(Float)
@@ -282,6 +292,28 @@ class Pick(Base):
     result: Mapped[str | None] = mapped_column(String(6))                   # win | loss | push | void
     profit_units: Mapped[float | None] = mapped_column(Float)
     __table_args__ = (UniqueConstraint("game_id", "player_id", "market_key", "kind", "side", "line"),)
+
+
+class StatProjection(Base):
+    """Expected box-score line for every rostered player in upcoming games (no prices involved).
+    Frozen at its last pre-game refresh, then `actual` is filled in for accuracy tracking."""
+    __tablename__ = "stat_projections"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    sport: Mapped[str] = mapped_column(String(3), index=True)
+    game_id: Mapped[int] = mapped_column(ForeignKey("games.id", ondelete="CASCADE"), index=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
+    stat: Mapped[str] = mapped_column(String(24))
+    mean: Mapped[float] = mapped_column(Float)
+    lo: Mapped[float] = mapped_column(Float)
+    hi: Mapped[float] = mapped_column(Float)
+    model_mean: Mapped[float] = mapped_column(Float)
+    anchored: Mapped[bool] = mapped_column(Boolean, server_default=FALSE)
+    last5: Mapped[float | None] = mapped_column(Float)
+    season_avg: Mapped[float | None] = mapped_column(Float)
+    sample: Mapped[int] = mapped_column(Integer)
+    actual: Mapped[float | None] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (UniqueConstraint("game_id", "player_id", "stat"),)
 
 
 class IngestRun(Base):
