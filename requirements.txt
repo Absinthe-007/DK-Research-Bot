@@ -1,0 +1,17 @@
+# No paid APIs and no LLM calls: every source is a free public feed.
+sqlalchemy[asyncio]>=2.0.30
+asyncpg>=0.29
+pydantic>=2.7
+pydantic-settings>=2.3
+httpx>=0.27
+beautifulsoup4>=4.12
+lxml>=5.2
+rapidfuzz>=3.9
+numpy>=1.26
+scipy>=1.13
+pandas>=2.2
+# optional NFL enrichment (snap %, air yards, WOPR) from nflverse
+nflreadpy>=0.1
+polars>=1.0
+pyarrow>=15
+pytest>=8.2

@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DK Research Bot</title>
+<meta name="description" content="Model-vs-DraftKings prop edges for NFL and NBA, updated automatically by GitHub Actions.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2353d769'/%3E%3Cpath d='M8 21l5-6 4 4 7-9' stroke='%23071a0c' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#0d1014;--panel:#151a20;--panel2:#1b2129;--line:#262e38;--text:#e8edf2;--muted:#8b97a6;
+  --accent:#53d769;--accent-ink:#071a0c;--warn:#f5b84b;--bad:#ff6b6b;--blue:#6aa8ff;
+  --radius:12px;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){
+  --bg:#f4f6f8;--panel:#fff;--panel2:#f0f3f6;--line:#dde3ea;--text:#121820;--muted:#5d6b7a;
+  --accent:#16a34a;--accent-ink:#fff;--warn:#b7791f;--bad:#d64545;--blue:#2563eb}}
+:root[data-theme="light"]{--bg:#f4f6f8;--panel:#fff;--panel2:#f0f3f6;--line:#dde3ea;--text:#121820;--muted:#5d6b7a;
+  --accent:#16a34a;--accent-ink:#fff;--warn:#b7791f;--bad:#d64545;--blue:#2563eb}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+a{color:var(--blue)}
+.wrap{max-width:1180px;margin:0 auto;padding:16px}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:14px}
+h1{font-size:20px;margin:0;letter-spacing:.2px}
+h1 small{display:block;font-size:12px;font-weight:400;color:var(--muted)}
+h2{font-size:15px;margin:22px 0 10px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted)}
+.tabs{display:flex;gap:6px;background:var(--panel);padding:4px;border-radius:999px;border:1px solid var(--line)}
+.tabs button{border:0;background:transparent;color:var(--muted);font-weight:600;padding:7px 16px;border-radius:999px;cursor:pointer;font-size:14px}
+.tabs button.on{background:var(--accent);color:var(--accent-ink)}
+.record{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px}
+.stat b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+.stat span{color:var(--muted);font-size:12px}
+.pos{color:var(--accent)}.neg{color:var(--bad)}
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 12px}
+.filters select,.filters input{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:14px;min-width:0}
+.filters input[type=search]{flex:1 1 180px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
+@media (max-width:420px){.cards{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px;display:flex;flex-direction:column;gap:8px;cursor:pointer}
+.card:hover{border-color:var(--accent)}
+.top{display:flex;gap:10px;align-items:center}
+.top img{width:44px;height:44px;border-radius:50%;object-fit:cover;background:var(--panel2);flex:none}
+.who{flex:1;min-width:0}
+.who b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.who span{font-size:12px;color:var(--muted)}
+.bet{font-weight:700;font-size:16px}
+.price{font-family:var(--mono);background:var(--panel2);border-radius:6px;padding:2px 7px;margin-left:4px;font-size:14px}
+.edge{font-family:var(--mono);font-weight:700;color:var(--accent);text-align:right}
+.edge small{display:block;color:var(--muted);font-weight:400;font-size:11px}
+.bars{display:flex;gap:2px;align-items:flex-end;height:30px}
+.bars i{flex:1;background:var(--line);border-radius:2px 2px 0 0;min-height:2px}
+.bars i.hit{background:var(--accent)}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:12px;color:var(--muted)}
+.grid3 b{display:block;color:var(--text);font-size:14px;font-variant-numeric:tabular-nums}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{font-size:11px;padding:2px 7px;border-radius:999px;background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn);border:1px solid color-mix(in srgb,var(--warn) 35%,transparent)}
+.chip.red{background:color-mix(in srgb,var(--bad) 15%,transparent);color:var(--bad);border-color:color-mix(in srgb,var(--bad) 35%,transparent)}
+.detail{display:none;font-size:12px;color:var(--muted);border-top:1px dashed var(--line);padding-top:8px}
+.card.open .detail{display:block}
+.detail table td{padding:1px 8px 1px 0}
+.games{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.game{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;font-size:13px}
+.game b{font-size:15px}
+.game .m{color:var(--muted);font-size:12px}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}
+table.t{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+table.t th,table.t td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+table.t th{color:var(--muted);font-weight:600;position:sticky;top:0;background:var(--panel)}
+.empty{color:var(--muted);padding:18px;text-align:center;background:var(--panel);border:1px dashed var(--line);border-radius:var(--radius)}
+footer{margin:28px 0 10px;color:var(--muted);font-size:12px}
+.themebtn{background:var(--panel);border:1px solid var(--line);color:var(--muted);border-radius:999px;padding:6px 10px;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>DK Research Bot<small id="updated">loading…</small></h1>
+    <div style="display:flex;gap:8px;align-items:center">
+      <div class="tabs" id="tabs"><button data-s="NBA" class="on">NBA</button><button data-s="NFL">NFL</button></div>
+      <button class="themebtn" id="theme" title="Toggle theme">◐</button>
+    </div>
+  </header>
+
+  <section class="record" id="record"></section>
+
+  <h2>Top plays</h2>
+  <div class="filters">
+    <select id="fMarket"><option value="">All markets</option></select>
+    <select id="fKind"><option value="">O/U + Alt</option><option value="ou">Over/Under only</option><option value="alt">Alt lines only</option></select>
+    <select id="fEdge"><option value="0">Any edge</option><option value="0.05">Edge ≥ 5%</option><option value="0.08">Edge ≥ 8%</option></select>
+    <select id="fGame"><option value="">All games</option></select>
+    <input type="search" id="fSearch" placeholder="Search player…">
+  </div>
+  <div class="cards" id="picks"></div>
+
+  <h2>Games</h2>
+  <div class="games" id="games"></div>
+
+  <h2>All main lines (model vs market)</h2>
+  <div class="tablewrap" style="max-height:420px"><table class="t" id="lines"></table></div>
+
+  <h2>Graded results</h2>
+  <div class="tablewrap" style="max-height:420px"><table class="t" id="results"></table></div>
+
+  <h2>Injuries (last 36h)</h2>
+  <div class="tablewrap" style="max-height:320px"><table class="t" id="inj"></table></div>
+
+  <footer id="foot"></footer>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const pct = (x, d=1) => x == null ? "–" : (x*100).toFixed(d) + "%";
+const odds = a => a == null ? "–" : (a > 0 ? "+" + a : String(a));
+const num = (x, d=1) => x == null ? "–" : Number(x).toFixed(d);
+const when = t => new Date(t).toLocaleString([], {weekday:"short", hour:"numeric", minute:"2-digit"});
+let BOARD = null, SPORT = "NBA";
+
+try { const t = localStorage.getItem("dk-theme"); if (t) document.documentElement.dataset.theme = t; } catch(e) {}
+$("#theme").onclick = () => {
+  const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+  const nxt = cur === "light" ? "dark" : "light";
+  document.documentElement.dataset.theme = nxt;
+  try { localStorage.setItem("dk-theme", nxt); } catch(e) {}
+};
+
+function recordCards(rec) {
+  const one = (label, r) => {
+    const n = r.w + r.l + r.p, units = r.units || 0, roi = (r.w + r.l) ? units / (r.w + r.l) : null;
+    const hit = (r.w + r.l) ? r.w / (r.w + r.l) : null;
+    return `<div class="stat"><span>${label} record</span><b>${r.w}-${r.l}${r.p ? "-" + r.p : ""}</b>
+      <span>${hit == null ? "no graded picks yet" : `${pct(hit)} hit · <span class="${units >= 0 ? "pos" : "neg"}">${units >= 0 ? "+" : ""}${num(units, 2)}u</span>`
+        + (roi == null ? "" : " · ROI " + pct(roi)) + (r.clv == null ? "" : " · CLV " + (r.clv >= 0 ? "+" : "") + pct(r.clv))}</span></div>`;
+  };
+  return one("Season", rec.all) + one("30-day", rec["30d"]) + one("7-day", rec["7d"]);
+}
+
+function bars(recent, line) {
+  if (!recent || !recent.length) return "";
+  const mx = Math.max(...recent, line || 0, 1);
+  return `<div class="bars" title="last ${recent.length} games vs line">${recent.map(v =>
+    `<i class="${v > line ? "hit" : ""}" style="height:${Math.max(6, v / mx * 100)}%"></i>`).join("")}</div>`;
+}
+
+function pickCard(p) {
+  const flags = (p.flags || []).filter(f => !f.startsWith("SUPERSEDED"));
+  const a = p.adjust || {};
+  const stake = (p.stake_pct || 0) * BOARD.bankroll;
+  const rows = [
+    ["Model mean (raw)", num(a.model_mean)], ["Market-implied mean", num(a.market_mean)],
+    ["Blended mean ± sd", `${num(p.proj_mean)} ± ${num(p.proj_std)}`], ["Distribution", `${p.dist_family}, n=${p.sample_size}`],
+    ["Opponent factor", num(a.opp_factor, 3)], a.pace_factor ? ["Pace factor", num(a.pace_factor, 3)] : null,
+    a.usage_factor && a.usage_factor !== 1 ? ["Usage factor", num(a.usage_factor, 3)] : null,
+    a.weather_factor && a.weather_factor !== 1 ? ["Weather factor", num(a.weather_factor, 3)] : null,
+    a.proj_minutes ? ["Projected minutes", num(a.proj_minutes)] : null,
+    ["Slate calibration", num(a.slate_calibration, 3)], ["Market fair prob", pct(p.fair_prob)],
+    ["Opened", p.open_price ? `${odds(p.open_price)}${p.open_line ? " @ " + p.open_line : ""}` : "–"],
+  ].filter(Boolean);
+  return `<div class="card" onclick="this.classList.toggle('open')">
+    <div class="top">
+      <img loading="lazy" alt="" src="${esc(p.headshot || "")}" onerror="this.style.visibility='hidden'">
+      <div class="who"><b>${esc(p.player)}</b><span>${esc(p.team)} ${esc(p.pos || "")} · ${esc(p.away)} @ ${esc(p.home)} · ${when(p.start_time)}</span></div>
+      <div class="edge">+${pct(p.edge)}<small>edge</small></div>
+    </div>
+    <div class="bet">${esc(p.side)} ${p.line} ${esc(p.label)}${p.kind === "alt" ? " (alt)" : ""}<span class="price">${odds(p.price)}</span></div>
+    ${bars(p.recent, p.line)}
+    <div class="grid3">
+      <div>Model<b>${pct(p.model_prob)}</b></div>
+      <div>Breakeven<b>${pct(p.breakeven_prob)}</b></div>
+      <div>EV / $1<b class="pos">+${num(p.ev_per_unit, 3)}</b></div>
+      <div>Projection<b>${num(p.proj_mean)}</b></div>
+      <div>¼-Kelly<b>$${num(stake, 2)}</b></div>
+      <div>Kelly %<b>${pct(p.stake_pct, 2)}</b></div>
+    </div>
+    ${flags.length ? `<div class="chips">${flags.map(f => `<span class="chip ${/STATUS|OUT|PRICE|GAP/.test(f) ? "red" : ""}">${esc(f)}</span>`).join("")}</div>` : ""}
+    <div class="detail"><table>${rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("")}</table></div>
+  </div>`;
+}
+
+function gameCard(g) {
+  const L = {}; (g.lines || []).forEach(l => L[l.market_type + ":" + l.side] = l);
+  const sp = L["spreads:home"], tot = L["totals:over"], mlh = L["h2h:home"], mla = L["h2h:away"];
+  const rest = (g.rest || []).map(r => r.is_b2b ? `${r.abbr} B2B` : r.is_3in4 ? `${r.abbr} 3-in-4` : r.short_week ? `${r.abbr} short wk` :
+    r.off_bye ? `${r.abbr} off bye` : null).filter(Boolean);
+  const w = g.weather;
+  const wx = g.indoor ? "Indoor" : w ? `${num(w.temp_f, 0)}°F · wind ${num(w.wind_mph, 0)} mph · precip ${pct(w.precip_prob, 0)}` : "";
+  return `<div class="game"><b>${esc(g.away)} @ ${esc(g.home)}</b> <span class="m">${when(g.start_time)}${g.week ? " · Wk " + g.week : ""}</span>
+    <div>${sp ? `${esc(g.home)} ${sp.point > 0 ? "+" : ""}${sp.point} (${odds(sp.price)})` : "spread –"} · ${tot ? `O/U ${tot.point}` : "total –"}
+      · ML ${odds(mla && mla.price)} / ${odds(mlh && mlh.price)}</div>
+    <div class="m">${esc(g.venue || "")}${wx ? " · " + wx : ""}</div>
+    ${rest.length ? `<div class="chips" style="margin-top:4px">${rest.map(r => `<span class="chip">${esc(r)}</span>`).join("")}</div>` : ""}
+  </div>`;
+}
+
+function render() {
+  const S = BOARD.sports[SPORT] || {};
+  $("#record").innerHTML = recordCards(S.record);
+  // filters
+  const mk = [...new Set((S.picks || []).map(p => p.label))].sort();
+  const fm = $("#fMarket"), keep = fm.value;
+  fm.innerHTML = `<option value="">All markets</option>` + mk.map(m => `<option ${m === keep ? "selected" : ""}>${esc(m)}</option>`).join("");
+  const fg = $("#fGame"), keepG = fg.value;
+  fg.innerHTML = `<option value="">All games</option>` + (S.games || []).map(g =>
+    `<option value="${g.id}" ${String(g.id) === keepG ? "selected" : ""}>${esc(g.away)} @ ${esc(g.home)}</option>`).join("");
+  const q = $("#fSearch").value.trim().toLowerCase(), kind = $("#fKind").value, minE = +$("#fEdge").value;
+  const picks = (S.picks || []).filter(p => (!fm.value || p.label === fm.value) && (!kind || p.kind === kind) &&
+    p.edge >= minE && (!fg.value || String(p.game_id) === fg.value) && (!q || p.player.toLowerCase().includes(q)));
+  $("#picks").innerHTML = picks.length ? picks.map(pickCard).join("") :
+    `<div class="empty">No flagged plays right now. The bot refreshes automatically before each game (T-10h, T-4h, T-90m, T-30m for NBA; T-72h, T-26h, T-5h, T-75m, T-25m for NFL).</div>`;
+  $("#games").innerHTML = (S.games || []).map(gameCard).join("") || `<div class="empty">No upcoming games.</div>`;
+  const L = (S.lines || []).filter(l => !q || l.player.toLowerCase().includes(q));
+  $("#lines").innerHTML = `<tr><th>Player</th><th>Market</th><th>Line</th><th>Over</th><th>Proj</th><th>Model O%</th><th>Market O%</th><th>Diff</th></tr>` +
+    L.map(l => { const m = l.model_prob / (1 - (l.push_prob || 0)), d = l.fair_prob == null ? null : m - l.fair_prob;
+      return `<tr><td>${esc(l.player)} <span style="color:var(--muted)">${esc(l.team)}</span></td><td>${esc(l.label)}</td><td>${l.line}</td>
+      <td>${odds(l.price)}</td><td>${num(l.proj_mean)}</td><td>${pct(m)}</td><td>${pct(l.fair_prob)}</td>
+      <td class="${d > 0 ? "pos" : "neg"}">${d == null ? "–" : (d > 0 ? "+" : "") + pct(d)}</td></tr>`; }).join("");
+  $("#results").innerHTML = `<tr><th>Date</th><th>Player</th><th>Bet</th><th>Price</th><th>Close</th><th>Proj</th><th>Actual</th><th>Result</th><th>Units</th></tr>` +
+    (S.results || []).map(r => `<tr><td>${new Date(r.start_time).toLocaleDateString()}</td><td>${esc(r.player)}</td>
+      <td>${esc(r.side)} ${r.line} ${esc(r.market_key.replace("player_", "").replaceAll("_", " "))}</td><td>${odds(r.price)}</td>
+      <td>${odds(r.close_price)}</td><td>${num(r.proj_mean)}</td><td>${r.actual ?? "DNP"}</td>
+      <td class="${r.result === "win" ? "pos" : r.result === "loss" ? "neg" : ""}">${esc(r.result)}</td>
+      <td>${r.profit_units == null ? "–" : num(r.profit_units, 2)}</td></tr>`).join("");
+  $("#inj").innerHTML = `<tr><th>Player</th><th>Team</th><th>Status</th><th>Injury</th><th>Return</th></tr>` +
+    (S.injuries || []).sort((a, b) => (a.team || "").localeCompare(b.team || "")).map(i =>
+      `<tr><td>${esc(i.player)}</td><td>${esc(i.team)}</td><td>${esc(i.status)}</td><td>${esc(i.injury || "")}</td><td>${esc(i.return_date || "")}</td></tr>`).join("");
+}
+
+document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("on", x === b));
+  SPORT = b.dataset.s; $("#fMarket").value = ""; $("#fGame").value = ""; render();
+});
+["#fMarket", "#fKind", "#fEdge", "#fGame"].forEach(id => $(id).onchange = render);
+$("#fSearch").oninput = render;
+
+fetch("data/board.json?" + Date.now()).then(r => r.json()).then(b => {
+  BOARD = b;
+  const nNBA = (b.sports.NBA?.picks || []).length, nNFL = (b.sports.NFL?.picks || []).length;
+  if (!nNBA && nNFL) { SPORT = "NFL"; document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("on", x.dataset.s === "NFL")); }
+  $("#updated").textContent = "Updated " + new Date(b.generated_at).toLocaleString() + ` · edge ≥ ${pct(b.edge_threshold)} · bankroll $${b.bankroll}`;
+  $("#foot").innerHTML = `Data: DraftKings prices via ESPN's public odds feed, ESPN box scores/injuries, NWS &amp; Open-Meteo weather, nflverse.
+    Projections are blended with the market-implied line and calibrated per slate; "edge" = model win probability minus DraftKings' breakeven.
+    Estimates, not guarantees. Bet responsibly — 1-800-GAMBLER.<br>Last jobs: ${(b.last_runs || []).map(r => `${esc(r.job)} ${r.ok ? "✓" : "✗"}`).join(" · ")}`;
+  render();
+}).catch(e => { $("#updated").textContent = "No data yet: the first pipeline run hasn't finished."; });
+</script>
+</body>
+</html>
