@@ -70,6 +70,23 @@ table.t th,table.t td{padding:7px 10px;border-bottom:1px solid var(--line);text-
 table.t th{color:var(--muted);font-weight:600;position:sticky;top:0;background:var(--panel)}
 .empty{color:var(--muted);padding:18px;text-align:center;background:var(--panel);border:1px dashed var(--line);border-radius:var(--radius)}
 footer{margin:28px 0 10px;color:var(--muted);font-size:12px}
+.searchbar{position:sticky;top:0;z-index:5;background:var(--bg);padding:10px 0 8px;margin:0 0 6px}
+.searchbar input{width:100%;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:999px;padding:11px 16px 11px 40px;font-size:15px;outline:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%238b97a6' stroke-width='2' viewBox='0 0 24 24'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:14px 50%}
+.searchbar input:focus{border-color:var(--accent)}
+.searchmeta{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--muted);margin-top:6px;min-height:18px}
+.linkbtn{background:none;border:0;color:var(--blue);cursor:pointer;font-size:12px;padding:0}
+.slate{display:flex;gap:8px;overflow-x:auto;padding:2px 0 8px;scrollbar-width:thin}
+.mu{flex:none;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 12px;cursor:pointer;text-align:left;color:var(--text);font:inherit;min-width:132px}
+.mu b{display:block;font-size:14px;white-space:nowrap}
+.mu span{display:block;font-size:11px;color:var(--muted);white-space:nowrap}
+.mu.on,.team.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,var(--panel))}
+.mu .n{color:var(--accent);font-weight:600}
+.daylabel{flex:none;align-self:center;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);padding:0 2px}
+.teams{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 4px}
+.team{background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer}
+.team small{color:var(--muted);font-weight:400}
 .themebtn{background:var(--panel);border:1px solid var(--line);color:var(--muted);border-radius:999px;padding:6px 10px;cursor:pointer}
 </style>
 </head>
@@ -83,19 +100,27 @@ footer{margin:28px 0 10px;color:var(--muted);font-size:12px}
     </div>
   </header>
 
-  <section class="record" id="record"></section>
+  <div class="searchbar">
+    <input type="search" id="q" placeholder="Search players, teams, markets (e.g. Celtics, LeBron, rebounds)…" autocomplete="off">
+    <div class="searchmeta"><span id="qmeta"></span><button class="linkbtn" id="clear" hidden>Clear filters</button></div>
+  </div>
+
+  <h2 style="margin-top:4px">Games</h2>
+  <div class="slate" id="slate"></div>
+  <h2 style="margin-top:6px" id="teamsHead">Teams playing</h2>
+  <div class="teams" id="teams"></div>
+
+  <section class="record" id="record" style="margin-top:14px"></section>
 
   <h2>Top plays</h2>
   <div class="filters">
     <select id="fMarket"><option value="">All markets</option></select>
     <select id="fKind"><option value="">O/U + Alt</option><option value="ou">Over/Under only</option><option value="alt">Alt lines only</option></select>
     <select id="fEdge"><option value="0">Any edge</option><option value="0.05">Edge ≥ 5%</option><option value="0.08">Edge ≥ 8%</option></select>
-    <select id="fGame"><option value="">All games</option></select>
-    <input type="search" id="fSearch" placeholder="Search player…">
   </div>
   <div class="cards" id="picks"></div>
 
-  <h2>Games</h2>
+  <h2>Game details</h2>
   <div class="games" id="games"></div>
 
   <h2>All main lines (model vs market)</h2>
@@ -116,7 +141,12 @@ const pct = (x, d=1) => x == null ? "–" : (x*100).toFixed(d) + "%";
 const odds = a => a == null ? "–" : (a > 0 ? "+" + a : String(a));
 const num = (x, d=1) => x == null ? "–" : Number(x).toFixed(d);
 const when = t => new Date(t).toLocaleString([], {weekday:"short", hour:"numeric", minute:"2-digit"});
-let BOARD = null, SPORT = "NBA";
+let BOARD = null, SPORT = "NBA", GAME = "", TEAM = "";
+const norm = t => String(t ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+// every search term must match somewhere in the item's text (player, teams, team names, market, side)
+const matches = (hay, q) => !q || q.split(/\s+/).every(t => hay.includes(t));
+function gameIndex(S) { const m = {}; (S.games || []).forEach(g => m[g.id] = g); return m; }
+function teamNames(S) { const m = {}; (S.games || []).forEach(g => { m[g.home] = g.home_name; m[g.away] = g.away_name; }); return m; }
 
 try { const t = localStorage.getItem("dk-theme"); if (t) document.documentElement.dataset.theme = t; } catch(e) {}
 $("#theme").onclick = () => {
@@ -194,45 +224,95 @@ function gameCard(g) {
   </div>`;
 }
 
+function slateHTML(S, counts) {
+  let lastDay = "", out = "";
+  for (const g of S.games || []) {
+    const day = new Date(g.start_time).toLocaleDateString([], {weekday: "short", month: "short", day: "numeric"});
+    if (day !== lastDay) { out += `<span class="daylabel">${esc(day)}</span>`; lastDay = day; }
+    const n = counts[g.id] || 0;
+    out += `<button class="mu ${String(g.id) === GAME ? "on" : ""}" data-g="${g.id}"><b>${esc(g.away)} @ ${esc(g.home)}</b>
+      <span>${new Date(g.start_time).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})}${n ? ` · <span class="n">${n} play${n > 1 ? "s" : ""}</span>` : ""}</span></button>`;
+  }
+  return out || `<div class="empty" style="flex:1">No upcoming games.</div>`;
+}
+
 function render() {
   const S = BOARD.sports[SPORT] || {};
+  const G = gameIndex(S), TN = teamNames(S);
+  const q = norm($("#q").value.trim());
+  const gameHay = g => norm([g.home, g.away, g.home_name, g.away_name, g.venue, g.city].join(" "));
+  const inScope = (gid, teams) => (!GAME || String(gid) === GAME) && (!TEAM || teams.includes(TEAM));
+  const teamsOfGame = gid => { const g = G[gid]; return g ? [g.home, g.away] : []; };
+
+  // ---- game & team chips
+  const counts = {}; (S.picks || []).forEach(p => counts[p.game_id] = (counts[p.game_id] || 0) + 1);
+  $("#slate").innerHTML = slateHTML(S, counts);
+  // teams on the next slate (first game day + 30h), so the chips match "tonight"
+  const first = (S.games || []).length ? new Date(S.games[0].start_time).getTime() : 0;
+  const slateGames = (S.games || []).filter(g => new Date(g.start_time).getTime() < first + 30 * 3600e3);
+  const playing = [...new Set(slateGames.flatMap(g => [g.away, g.home]))].sort();
+  if (TEAM && !playing.includes(TEAM)) playing.push(TEAM);
+  $("#teamsHead").textContent = first ? "Teams playing · " + new Date(first).toLocaleDateString([], {weekday: "short", month: "short", day: "numeric"}) : "Teams playing";
+  $("#teams").innerHTML = playing.map(t => `<button class="team ${t === TEAM ? "on" : ""}" data-t="${esc(t)}" title="${esc(TN[t] || t)}">${esc(t)}</button>`).join("");
+  document.querySelectorAll("#slate .mu").forEach(b => b.onclick = () => { GAME = GAME === b.dataset.g ? "" : b.dataset.g; TEAM = ""; render(); });
+  document.querySelectorAll("#teams .team").forEach(b => b.onclick = () => { TEAM = TEAM === b.dataset.t ? "" : b.dataset.t; GAME = ""; render(); });
+
   $("#record").innerHTML = recordCards(S.record);
-  // filters
   const mk = [...new Set((S.picks || []).map(p => p.label))].sort();
   const fm = $("#fMarket"), keep = fm.value;
   fm.innerHTML = `<option value="">All markets</option>` + mk.map(m => `<option ${m === keep ? "selected" : ""}>${esc(m)}</option>`).join("");
-  const fg = $("#fGame"), keepG = fg.value;
-  fg.innerHTML = `<option value="">All games</option>` + (S.games || []).map(g =>
-    `<option value="${g.id}" ${String(g.id) === keepG ? "selected" : ""}>${esc(g.away)} @ ${esc(g.home)}</option>`).join("");
-  const q = $("#fSearch").value.trim().toLowerCase(), kind = $("#fKind").value, minE = +$("#fEdge").value;
+  const kind = $("#fKind").value, minE = +$("#fEdge").value;
+
+  const pickHay = p => norm([p.player, p.team, TN[p.team], p.home, p.away, TN[p.home], TN[p.away], p.label, p.market_key, p.side, p.pos].join(" "));
   const picks = (S.picks || []).filter(p => (!fm.value || p.label === fm.value) && (!kind || p.kind === kind) &&
-    p.edge >= minE && (!fg.value || String(p.game_id) === fg.value) && (!q || p.player.toLowerCase().includes(q)));
+    p.edge >= minE && inScope(p.game_id, [p.home, p.away]) && matches(pickHay(p), q));
   $("#picks").innerHTML = picks.length ? picks.map(pickCard).join("") :
-    `<div class="empty">No flagged plays right now. The bot refreshes automatically before each game (T-10h, T-4h, T-90m, T-30m for NBA; T-72h, T-26h, T-5h, T-75m, T-25m for NFL).</div>`;
-  $("#games").innerHTML = (S.games || []).map(gameCard).join("") || `<div class="empty">No upcoming games.</div>`;
-  const L = (S.lines || []).filter(l => !q || l.player.toLowerCase().includes(q));
+    `<div class="empty">${q || GAME || TEAM ? "No flagged plays match this search/filter." :
+      "No flagged plays right now. The bot refreshes automatically before each game (T-10h, T-4h, T-90m, T-30m for NBA; T-72h, T-26h, T-5h, T-75m, T-25m for NFL)."}</div>`;
+
+  const games = (S.games || []).filter(g => inScope(g.id, [g.home, g.away]) && matches(gameHay(g), q) ||
+    (q && inScope(g.id, [g.home, g.away]) && picks.some(p => p.game_id === g.id)));
+  $("#games").innerHTML = games.map(gameCard).join("") || `<div class="empty">No games match.</div>`;
+
+  const L = (S.lines || []).filter(l => inScope(l.game_id, teamsOfGame(l.game_id)) &&
+    matches(norm([l.player, l.team, TN[l.team], l.label, l.market_key, ...teamsOfGame(l.game_id), ...teamsOfGame(l.game_id).map(t => TN[t])].join(" ")), q));
   $("#lines").innerHTML = `<tr><th>Player</th><th>Market</th><th>Line</th><th>Over</th><th>Proj</th><th>Model O%</th><th>Market O%</th><th>Diff</th></tr>` +
-    L.map(l => { const m = l.model_prob / (1 - (l.push_prob || 0)), d = l.fair_prob == null ? null : m - l.fair_prob;
+    (L.map(l => { const m = l.model_prob / (1 - (l.push_prob || 0)), d = l.fair_prob == null ? null : m - l.fair_prob;
       return `<tr><td>${esc(l.player)} <span style="color:var(--muted)">${esc(l.team)}</span></td><td>${esc(l.label)}</td><td>${l.line}</td>
       <td>${odds(l.price)}</td><td>${num(l.proj_mean)}</td><td>${pct(m)}</td><td>${pct(l.fair_prob)}</td>
-      <td class="${d > 0 ? "pos" : "neg"}">${d == null ? "–" : (d > 0 ? "+" : "") + pct(d)}</td></tr>`; }).join("");
+      <td class="${d > 0 ? "pos" : "neg"}">${d == null ? "–" : (d > 0 ? "+" : "") + pct(d)}</td></tr>`; }).join("") ||
+      `<tr><td colspan="8" style="color:var(--muted)">No lines match.</td></tr>`);
+
+  const R = (S.results || []).filter(r => !GAME && (!TEAM || r.team === TEAM) && matches(norm([r.player, r.team, TN[r.team], r.market_key].join(" ")), q));
   $("#results").innerHTML = `<tr><th>Date</th><th>Player</th><th>Bet</th><th>Price</th><th>Close</th><th>Proj</th><th>Actual</th><th>Result</th><th>Units</th></tr>` +
-    (S.results || []).map(r => `<tr><td>${new Date(r.start_time).toLocaleDateString()}</td><td>${esc(r.player)}</td>
+    (R.map(r => `<tr><td>${new Date(r.start_time).toLocaleDateString()}</td><td>${esc(r.player)}</td>
       <td>${esc(r.side)} ${r.line} ${esc(r.market_key.replace("player_", "").replaceAll("_", " "))}</td><td>${odds(r.price)}</td>
       <td>${odds(r.close_price)}</td><td>${num(r.proj_mean)}</td><td>${r.actual ?? "DNP"}</td>
       <td class="${r.result === "win" ? "pos" : r.result === "loss" ? "neg" : ""}">${esc(r.result)}</td>
-      <td>${r.profit_units == null ? "–" : num(r.profit_units, 2)}</td></tr>`).join("");
+      <td>${r.profit_units == null ? "–" : num(r.profit_units, 2)}</td></tr>`).join("") ||
+      `<tr><td colspan="9" style="color:var(--muted)">${GAME ? "Results are shown once games are graded." : "No graded results yet."}</td></tr>`);
+
+  const scopeTeams = GAME ? teamsOfGame(+GAME) : TEAM ? [TEAM] : null;
+  const I = (S.injuries || []).filter(i => (!scopeTeams || scopeTeams.includes(i.team)) &&
+    matches(norm([i.player, i.team, TN[i.team], i.status, i.injury].join(" ")), q));
   $("#inj").innerHTML = `<tr><th>Player</th><th>Team</th><th>Status</th><th>Injury</th><th>Return</th></tr>` +
-    (S.injuries || []).sort((a, b) => (a.team || "").localeCompare(b.team || "")).map(i =>
-      `<tr><td>${esc(i.player)}</td><td>${esc(i.team)}</td><td>${esc(i.status)}</td><td>${esc(i.injury || "")}</td><td>${esc(i.return_date || "")}</td></tr>`).join("");
+    (I.sort((a, b) => (a.team || "").localeCompare(b.team || "")).map(i =>
+      `<tr><td>${esc(i.player)}</td><td>${esc(i.team)}</td><td>${esc(i.status)}</td><td>${esc(i.injury || "")}</td><td>${esc(i.return_date || "")}</td></tr>`).join("") ||
+      `<tr><td colspan="5" style="color:var(--muted)">No injuries match.</td></tr>`);
+
+  const scope = GAME && G[GAME] ? `${G[GAME].away} @ ${G[GAME].home}` : TEAM ? (TN[TEAM] || TEAM) : "";
+  $("#qmeta").textContent = (q || scope) ? `${picks.length} play${picks.length === 1 ? "" : "s"} · ${games.length} game${games.length === 1 ? "" : "s"} · ${L.length} lines${scope ? " — " + scope : ""}` : "";
+  $("#clear").hidden = !(q || GAME || TEAM || fm.value || kind || minE);
 }
 
 document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
   document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("on", x === b));
-  SPORT = b.dataset.s; $("#fMarket").value = ""; $("#fGame").value = ""; render();
+  SPORT = b.dataset.s; $("#fMarket").value = ""; GAME = ""; TEAM = ""; render();
 });
-["#fMarket", "#fKind", "#fEdge", "#fGame"].forEach(id => $(id).onchange = render);
-$("#fSearch").oninput = render;
+["#fMarket", "#fKind", "#fEdge"].forEach(id => $(id).onchange = render);
+$("#q").oninput = render;
+$("#clear").onclick = () => { $("#q").value = ""; GAME = ""; TEAM = ""; $("#fMarket").value = ""; $("#fKind").value = ""; $("#fEdge").value = "0"; render(); };
+document.addEventListener("keydown", e => { if (e.key === "/" && document.activeElement !== $("#q")) { e.preventDefault(); $("#q").focus(); } });
 
 fetch("data/board.json?" + Date.now()).then(r => r.json()).then(b => {
   BOARD = b;
