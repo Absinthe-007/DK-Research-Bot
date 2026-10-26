@@ -1,0 +1,179 @@
+name: pipeline
+
+# Free, LLM-free, game-aware schedule:
+#  * every 15 min a tiny "plan" job asks ESPN when the next games start and only launches the
+#    full refresh at kickoff-relative checkpoints (see app/planner.py). No games = no work.
+#  * once a day (05:41 ET) the nightly job loads box scores, grades picks and prunes.
+# The Postgres database lives as a dump in the "data" release; the dashboard deploys to Pages.
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+    - cron: "41 9 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "auto = let the planner decide"
+        type: choice
+        options: [auto, refresh, nightly, backfill, bootstrap]
+        default: auto
+      sport:
+        type: choice
+        options: [both, NBA, NFL]
+        default: both
+      start:
+        description: "backfill start date (YYYY-MM-DD)"
+        default: ""
+      end:
+        description: "backfill end date (YYYY-MM-DD, default today)"
+        default: ""
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+env:
+  DATA_TAG: data
+  DATABASE_URL: postgresql+asyncpg://dkbot:dkbot@localhost:5432/dkbot
+  PGURL: postgresql://dkbot:dkbot@localhost:5432/dkbot
+  STATE_PATH: state/state.json
+  CONTACT_EMAIL: ${{ github.repository_owner }}@users.noreply.github.com
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      mode: ${{ steps.decide.outputs.mode }}
+      sports: ${{ steps.decide.outputs.sports }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Decide what to run
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          SCHED: ${{ github.event.schedule }}
+          IN_MODE: ${{ inputs.mode }}
+          IN_SPORT: ${{ inputs.sport }}
+        run: |
+          if [ "$IN_SPORT" = "NBA" ] || [ "$IN_SPORT" = "NFL" ]; then SP="[\"$IN_SPORT\"]"; else SP='["NBA","NFL"]'; fi
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$IN_MODE" != "auto" ]; then
+            echo "mode=$IN_MODE" >> "$GITHUB_OUTPUT"; echo "sports=$SP" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$SCHED" = "41 9 * * *" ]; then
+            echo "mode=nightly" >> "$GITHUB_OUTPUT"; echo "sports=$SP" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          pip install --quiet httpx pydantic-settings
+          mkdir -p state
+          gh release download "$DATA_TAG" -p state.json -D state 2>/dev/null || echo "no planner state yet"
+          python -m app.planner | tee plan.json
+          ANY=$(grep '^any=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)
+          if [ "$ANY" = "true" ]; then echo "mode=refresh" >> "$GITHUB_OUTPUT"; else echo "mode=none" >> "$GITHUB_OUTPUT"; fi
+
+  run:
+    needs: plan
+    if: needs.plan.outputs.mode != 'none'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      # one-time: unpack the uploaded code bundle into the repo (workflow files excluded)
+      - name: Bootstrap from bundle
+        if: needs.plan.outputs.mode == 'bootstrap'
+        run: |
+          test -f bundle.tar.gz || { echo "bundle.tar.gz not found"; exit 1; }
+          tar -xzf bundle.tar.gz --exclude='.github' --exclude='./.github'
+          git rm -q --cached bundle.tar.gz && rm bundle.tar.gz
+          git config user.name "dk-research-bot"
+          git config user.email "${{ github.repository_owner }}@users.noreply.github.com"
+          git add -A && git commit -m "Bootstrap DK Research Bot code" && git push
+          echo "Bootstrapped. Now run the workflow with mode=backfill."
+          exit 0
+
+      - uses: actions/setup-python@v5
+        if: needs.plan.outputs.mode != 'bootstrap'
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        if: needs.plan.outputs.mode != 'bootstrap'
+        run: pip install -r requirements.txt
+
+      - name: Start Postgres and restore the database
+        id: restore
+        if: needs.plan.outputs.mode != 'bootstrap'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -q -c "CREATE USER dkbot WITH PASSWORD 'dkbot' SUPERUSER;" -c "CREATE DATABASE dkbot OWNER dkbot;"
+          mkdir -p state
+          if gh release download "$DATA_TAG" -p db.dump -p state.json -D /tmp/data 2>/dev/null; then
+            pg_restore --no-owner --role=dkbot -d "$PGURL" /tmp/data/db.dump || echo "restore had warnings"
+            cp /tmp/data/state.json state/ 2>/dev/null || true
+          else
+            echo "No saved database yet - starting fresh."
+          fi
+          python -m scripts.init_db
+
+      - name: Run pipeline
+        if: needs.plan.outputs.mode != 'bootstrap'
+        env:
+          MODE: ${{ needs.plan.outputs.mode }}
+          SPORTS: ${{ needs.plan.outputs.sports }}
+          START: ${{ inputs.start }}
+          END: ${{ inputs.end }}
+        run: |
+          for SP in $(echo "$SPORTS" | jq -r '.[]'); do
+            case "$MODE" in
+              refresh)  python -m app.pipeline refresh --sport "$SP" || echo "::warning::$SP refresh failed" ;;
+              backfill) python -m app.pipeline backfill --sport "$SP" --start "${START:-$(date -d '-150 days' +%F)}" --end "${END:-$(date +%F)}" ;;
+            esac
+          done
+          if [ "$MODE" = "nightly" ]; then python -m app.pipeline nightly; fi
+          python -m app.pipeline export
+
+      - name: Save database to the data release
+        if: always() && steps.restore.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pg_dump -Fc --no-owner "$PGURL" > /tmp/db.dump
+          ls -lh /tmp/db.dump
+          gh release view "$DATA_TAG" >/dev/null 2>&1 || gh release create "$DATA_TAG" --title "Pipeline data" \
+            --notes "Database dump + planner state, overwritten by every pipeline run. Not a code release." --latest=false
+          FILES="/tmp/db.dump"; [ -f state/state.json ] && FILES="$FILES state/state.json"
+          gh release upload "$DATA_TAG" $FILES --clobber
+
+      - name: Nightly heartbeat commit (keeps the scheduled workflow from being auto-disabled)
+        if: needs.plan.outputs.mode == 'nightly'
+        run: |
+          mkdir -p status && date -u +"%Y-%m-%dT%H:%MZ" > status/last_nightly.txt
+          git config user.name "dk-research-bot"
+          git config user.email "${{ github.repository_owner }}@users.noreply.github.com"
+          git add status && git commit -m "nightly heartbeat" -q && git push -q || echo "nothing to commit"
+
+      - uses: actions/upload-pages-artifact@v3
+        if: needs.plan.outputs.mode != 'bootstrap'
+        with:
+          path: docs
+
+  deploy:
+    needs: [plan, run]
+    if: needs.plan.outputs.mode != 'none' && needs.plan.outputs.mode != 'bootstrap'
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
