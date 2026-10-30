@@ -60,6 +60,11 @@ NFL_GROUPS = {
 POS_GROUP = {"QB": "QB", "RB": "RB", "FB": "RB", "WR": "REC", "TE": "REC", "K": "K", "PK": "K"}
 OUT_STATUSES = ("Out", "IR", "PUP", "Suspended")
 NBA_LOOKBACK, NFL_LOOKBACK = 25, 17
+NBA_MIN_TEAM_GP = 3         # once a team has played this many games, a player must have a role THIS season
+NBA_ROLE_WINDOW = 5         # ...judged over the team's last N games
+NBA_MIN_PARTICIPATION = 0.4  # skip players who got into fewer than this share of them (unless on the injury report)
+NBA_PRIOR_GAMES = 3.0       # current-season minutes outweigh the long window after ~3 games
+NFL_MIN_TEAM_GP, NFL_ROLE_WINDOW = 2, 3   # NFL: must show up in one of the team's last 3 box scores
 
 
 def _group(pos: str | None) -> str:
@@ -98,14 +103,16 @@ def _opp_factors(df: pd.DataFrame, stats: list[str], by_pos: bool, k: float) -> 
     return out
 
 
-async def _context(s, sport: str, hours: int):
-    now = datetime.now(timezone.utc)
+async def _context(s, sport: str, hours: int, as_of: datetime | None = None):
+    """Upcoming games + who's on those teams. `as_of` (backtests only) rewinds the clock: games that
+    started after it are projected using only data that existed before it."""
+    now = as_of or datetime.now(timezone.utc)
     games = pd.DataFrame((await s.execute(text("""
         SELECT g.id game_id, g.start_time, g.season, ht.abbr home, at.abbr away, COALESCE(v.indoor,false) indoor
         FROM games g JOIN teams ht ON ht.id=g.home_team_id JOIN teams at ON at.id=g.away_team_id
         LEFT JOIN venues v ON v.id=g.venue_id
-        WHERE g.sport=:sp AND NOT g.completed AND g.start_time > :now AND g.start_time < :hi AND g.season_type IN (2,3)
-        ORDER BY g.start_time"""), {"sp": sport, "now": now, "hi": now + timedelta(hours=hours)})).mappings().all())
+        WHERE g.sport=:sp AND (:bt OR NOT g.completed) AND g.start_time > :now AND g.start_time < :hi AND g.season_type IN (2,3)
+        ORDER BY g.start_time"""), {"sp": sport, "now": now, "hi": now + timedelta(hours=hours), "bt": as_of is not None})).mappings().all())
     if games.empty:
         return games, None, None, None, None
     teams = sorted(set(games.home) | set(games.away))
@@ -114,8 +121,8 @@ async def _context(s, sport: str, hours: int):
         WHERE sport=:sp AND team_abbr = ANY(:t)"""), {"sp": sport, "t": teams})).mappings().all())
     inj = pd.DataFrame((await s.execute(text("""
         SELECT DISTINCT ON (player_id) player_id, status, injury FROM injury_reports
-        WHERE sport=:sp AND player_id IS NOT NULL AND captured_at > now() - interval '36 hours'
-        ORDER BY player_id, captured_at DESC"""), {"sp": sport})).mappings().all())
+        WHERE sport=:sp AND player_id IS NOT NULL AND captured_at > CAST(:now AS timestamptz) - interval '36 hours' AND captured_at <= :now
+        ORDER BY player_id, captured_at DESC"""), {"sp": sport, "now": now})).mappings().all())
     rest = pd.DataFrame((await s.execute(text("""
         SELECT tr.game_id, t.abbr, tr.is_b2b, tr.is_3in4, tr.short_week, tr.off_bye FROM team_rest tr
         JOIN teams t ON t.id=tr.team_id WHERE tr.game_id = ANY(:g)"""), {"g": games.game_id.tolist()})).mappings().all())
@@ -123,6 +130,8 @@ async def _context(s, sport: str, hours: int):
         SELECT game_id, player_id, market_key, (inputs->>'blended_mean')::float blended FROM projections
         WHERE game_id = ANY(:g) AND inputs ? 'blended_mean' AND NOT (inputs ? 'suppressed')"""),
         {"g": games.game_id.tolist()})).mappings().all())
+    if as_of is not None:           # backtest: score the raw model, not the market-blended mean
+        anchors = anchors.iloc[0:0]
     return games, players, inj, rest, anchors
 
 
@@ -153,15 +162,16 @@ def _rows_for(sport, game, p, stat_means, sds, families, last5, season_avg, n, a
 
 
 # ---------------------------------------------------------------------------
-async def _nba(s) -> list[dict]:
-    games, players, inj, rest, anchors = await _context(s, "NBA", 36)
+async def _nba(s, as_of: datetime | None = None) -> list[dict]:
+    games, players, inj, rest, anchors = await _context(s, "NBA", 36, as_of)
     if games.empty or players.empty:
         return []
     ids = players.player_id.tolist()
     logs = pd.DataFrame((await s.execute(text("""
         SELECT player_id, game_id, game_date, season, team_abbr, opp_abbr, minutes, pts, reb, ast, fg3m, stl, blk, tov,
-               fga, fta, oreb FROM nba_player_gamelogs WHERE player_id = ANY(:p) OR game_date > now() - interval '120 days'
-        ORDER BY game_date"""), {"p": ids})).mappings().all())
+               fga, fta, oreb FROM nba_player_gamelogs
+        WHERE (player_id = ANY(:p) OR game_date > CAST(:now AS date) - 120) AND game_date < CAST(:now AS date)
+        ORDER BY game_date"""), {"p": ids, "now": as_of or datetime.now(timezone.utc)})).mappings().all())
     if logs.empty:
         return []
     logs["pra"] = logs.pts + logs.reb + logs.ast
@@ -189,6 +199,9 @@ async def _nba(s) -> list[dict]:
             if p.team_abbr not in absent or mpg[p.player_id] > mpg[absent[p.team_abbr]]:
                 absent[p.team_abbr] = p.player_id
     games_of = logs.groupby("player_id").game_id.apply(set).to_dict()
+    # current-season role: which of his team's games this season he actually got into
+    team_games = cur.groupby("team_abbr").apply(lambda d: list(dict.fromkeys(d.sort_values("game_date").game_id)))
+    cur_games = cur[cur.minutes > 0].groupby("player_id").game_id.apply(set).to_dict()
 
     rows, by_player = [], {pid: g for pid, g in logs[logs.player_id.isin(ids)].groupby("player_id")}
     for g in games.itertuples():
@@ -203,6 +216,19 @@ async def _nba(s) -> list[dict]:
                 mins = h.minutes.to_numpy(float)
                 w = B.ewm_weights(len(h))
                 min_mu, _ = B.ewm_mean_std(mins)
+                # The 25-game window reaches back into last season (incl. April tank/rest games),
+                # so early in the year it says nothing about TODAY's rotation. Lean on this season.
+                tg = team_games.get(side, [])
+                mine = cur_games.get(p.player_id, set())
+                if len(tg) >= NBA_MIN_TEAM_GP:
+                    recent = tg[-NBA_ROLE_WINDOW:]
+                    played_recent = sum(gid in mine for gid in recent) / len(recent)
+                    if not mine or (played_recent < NBA_MIN_PARTICIPATION and status.get(p.player_id) is None):
+                        continue          # not in the rotation this season (and not just back from injury)
+                if mine:
+                    hc = h[h.game_id.isin(mine)]
+                    cur_mu, _ = B.ewm_mean_std(hc.minutes.to_numpy(float))
+                    min_mu = B.shrink(cur_mu, len(hc), min_mu, NBA_PRIOR_GAMES)
                 r = rest_of.get((g.game_id, side))
                 m_fac, _ = B.nba_minutes_factor(bool(r and r.is_b2b), bool(r and r.is_3in4))
                 pace_f = 1.0
@@ -256,14 +282,51 @@ def _nfl_relevant(grp: str, m: dict) -> bool:
     return True
 
 
+def _infer_group(h: pd.DataFrame) -> str:
+    """Position group from what a player actually does, for the ~10% with no position on file."""
+    m = h[["pass_attempts", "carries", "targets", "fgm", "xpm", "tackles"]].mean()
+    if m.pass_attempts >= 5:
+        return "QB"
+    if m.fgm + m.xpm >= 0.5:
+        return "K"
+    if m.carries >= 2 and m.carries >= m.targets:
+        return "RB"
+    if m.targets >= 1:
+        return "REC"
+    return "DEF"
+
+
+def _starting_qbs(logs: pd.DataFrame, cur: pd.DataFrame, players: pd.DataFrame, status: dict) -> dict:
+    """team -> {player_ids} of QBs who may start: the one with the most pass attempts over the team's
+    last two games (on the roster, not ruled out), plus a regular starter coming back from injury
+    (on the report as Questionable/Probable/Active and averaging 20+ attempts this season)."""
+    out: dict[str, set] = {}
+    roster = players.set_index("player_id").team_abbr.to_dict()
+    src = cur if not cur.empty else logs
+    ok = lambda pid: status.get(pid, ("",))[0] not in OUT_STATUSES + ("Doubtful",)
+    for team, d in src[src.pgroup == "QB"].groupby("team_abbr"):
+        recent = list(dict.fromkeys(src[src.team_abbr == team].sort_values("game_date").game_id))[-2:]
+        att = d[d.game_id.isin(recent)].groupby("player_id").pass_attempts.sum().sort_values(ascending=False)
+        picks = set()
+        for pid in att.index:
+            if roster.get(pid) == team and ok(pid):
+                picks.add(int(pid))
+                break
+        for pid, mu in d.groupby("player_id").pass_attempts.mean().items():
+            if roster.get(pid) == team and pid in status and ok(pid) and mu >= 20:
+                picks.add(int(pid))
+        out[team] = picks
+    return out
+
+
 def B_shrink_sd(sd_player: float, n: int, mean: float, cv: float, k: float = 10.0) -> float:
     sd_player = 0.0 if sd_player != sd_player else sd_player
     return ((n * sd_player ** 2 + k * (cv * mean) ** 2) / (n + k)) ** 0.5
 
 
 # ---------------------------------------------------------------------------
-async def _nfl(s) -> list[dict]:
-    games, players, inj, rest, anchors = await _context(s, "NFL", 24 * 8)
+async def _nfl(s, as_of: datetime | None = None) -> list[dict]:
+    games, players, inj, rest, anchors = await _context(s, "NFL", 24 * 8, as_of)
     if games.empty or players.empty:
         return []
     from app.engine.projector import latest_weather
@@ -271,11 +334,19 @@ async def _nfl(s) -> list[dict]:
     ids = players.player_id.tolist()
     logs = pd.DataFrame((await s.execute(text(f"""
         SELECT player_id, game_id, game_date, season, team_abbr, opp_abbr, position, {", ".join(stats)}
-        FROM nfl_player_games WHERE player_id = ANY(:p) OR game_date > now() - interval '400 days'
-        ORDER BY game_date"""), {"p": ids})).mappings().all())
+        FROM nfl_player_games
+        WHERE (player_id = ANY(:p) OR game_date > CAST(:now AS date) - 400) AND game_date < CAST(:now AS date)
+        ORDER BY game_date"""), {"p": ids, "now": as_of or datetime.now(timezone.utc)})).mappings().all())
     if logs.empty:
         return []
-    logs["pgroup"] = logs.position.map(_group)
+    # ESPN box scores carry no position, so take it from the player table (all players, not just this
+    # slate's - the defense-vs-position factors need every opponent's games). Without this every row
+    # fell into "DEF" and the opponent adjustment silently became 1.0 for every QB/RB/WR/TE.
+    pos_of = dict((await s.execute(text(
+        "SELECT id, position FROM players WHERE sport='NFL' AND position IS NOT NULL AND position <> ''"))).all())
+    logs["position"] = logs.player_id.map(pos_of).fillna(logs.position)
+    inferred = logs.groupby("player_id").apply(_infer_group).to_dict()
+    logs["pgroup"] = [(_group(ps) if ps else inferred.get(pid, "DEF")) for pid, ps in zip(logs.player_id, logs.position)]
     season = int(games.season.iloc[0])
     cur = logs[logs.season == season]
     oppf = _opp_factors(cur if cur.game_id.nunique() >= 40 else logs, stats, True, 5.0)
@@ -288,6 +359,9 @@ async def _nfl(s) -> list[dict]:
                   "pass_tds": "player_pass_tds", "rec_yds": "player_reception_yds", "receptions": "player_receptions",
                   "rush_yds": "player_rush_yds", "carries": "player_rush_attempts"}
     by_player = {pid: g for pid, g in logs[logs.player_id.isin(ids)].groupby("player_id")}
+    team_games = cur.groupby("team_abbr").apply(lambda d: list(dict.fromkeys(d.sort_values("game_date").game_id)))
+    cur_games = cur.groupby("player_id").game_id.apply(set).to_dict()
+    starter_qb = _starting_qbs(logs, cur, players, status)
 
     rows = []
     for g in games.itertuples():
@@ -299,7 +373,16 @@ async def _nfl(s) -> list[dict]:
                 h = by_player[p.player_id].tail(NFL_LOOKBACK)
                 if len(h) < 2 or (pd.Timestamp(g.start_time).date() - h.game_date.max()).days > 400:
                     continue
-                grp = _group(p.position or h.position.iloc[-1])
+                grp = _group(p.position) if p.position else h.pgroup.iloc[-1]
+                # must have a role THIS season: appeared in one of the team's last few games (box scores
+                # only list players who recorded a stat), unless he's on the injury report (returning)
+                tg = team_games.get(side, [])
+                mine = cur_games.get(p.player_id, set())
+                if len(tg) >= NFL_MIN_TEAM_GP and not (set(tg[-NFL_ROLE_WINDOW:]) & mine) \
+                        and status.get(p.player_id) is None:
+                    continue
+                if grp == "QB" and side in starter_qb and p.player_id not in starter_qb[side]:
+                    continue              # backups only get a line if the starter is out
                 wanted = [st for st in NFL_GROUPS[grp] if h[st].sum() > 0 or st in NFL_GROUPS[grp][:3]]
                 if grp == "REC":
                     wanted = [st for st in wanted if st not in ("carries", "rush_yds") or h.carries.mean() >= 0.5]

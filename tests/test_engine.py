@@ -173,3 +173,22 @@ def test_parse_american():
     from app.ingestion.common import parse_american, parse_float
     assert parse_american("+170") == 170 and parse_american("EVEN") == 100 and parse_american("OFF") is None
     assert parse_float("o43.5") == 43.5 and parse_float("+4.5") == 4.5
+
+
+def test_infer_nfl_group_from_stats():
+    import pandas as pd
+    from app.engine.statboard import _infer_group
+    row = dict(pass_attempts=0, carries=0, targets=0, fgm=0, xpm=0, tackles=0)
+    mk = lambda **kw: pd.DataFrame([row | kw] * 3)
+    assert _infer_group(mk(pass_attempts=30)) == "QB"
+    assert _infer_group(mk(carries=15, targets=2)) == "RB"
+    assert _infer_group(mk(targets=6, carries=1)) == "REC"
+    assert _infer_group(mk(fgm=2, xpm=3)) == "K"
+    assert _infer_group(mk(tackles=5)) == "DEF"
+
+
+def test_pick_result_fits_column():
+    from app.db.models import Pick
+    width = Pick.__table__.c.result.type.length
+    for r in ("win", "loss", "push", "void", "pulled"):
+        assert len(r) <= width

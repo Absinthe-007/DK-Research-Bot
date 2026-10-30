@@ -17,6 +17,10 @@ MIGRATIONS = [
     "ALTER TABLE prop_snapshots ADD COLUMN IF NOT EXISTS price_estimated boolean DEFAULT false NOT NULL",
 ] + [f"ALTER TABLE nfl_player_games ADD COLUMN IF NOT EXISTS {c} double precision DEFAULT 0 NOT NULL"
      for c in ("tackles", "sacks", "tfl", "qb_hits", "passes_defended", "def_int", "fgm", "fga", "xpm")]
+# backfill: ESPN box scores never carried position, which zeroed the NFL defense-vs-position
+# adjustment in both the stat board and the +EV projector (idempotent, cheap)
+MIGRATIONS += ["""UPDATE nfl_player_games g SET position = p.position FROM players p
+                  WHERE g.player_id = p.id AND g.position IS NULL AND p.position IS NOT NULL AND p.position <> ''"""]
 
 VIEWS = [
     """

@@ -25,7 +25,8 @@ async def grade(sport: str) -> int:
             WHERE pk.sport=:sp AND pk.result IS NULL AND g.completed AND g.boxscore_loaded"""), {"sp": sport})).mappings().all()
         for pk in picks:
             if not pk["active"]:
-                await s.execute(text("UPDATE picks SET result='dropped' WHERE id=:i"), {"i": pk["id"]})
+                # result is varchar(6): the old value 'dropped' (7 chars) crashed the whole nightly grade
+                await s.execute(text("UPDATE picks SET result='pulled' WHERE id=:i"), {"i": pk["id"]})
                 continue
             expr = stat_sql(MARKET_INDEX[pk["market_key"]][3], cols)
             actual = (await s.execute(text(f"SELECT {expr} FROM {table} WHERE player_id=:p AND game_id=:g"),

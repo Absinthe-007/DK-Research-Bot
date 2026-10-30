@@ -45,11 +45,12 @@ ORDER BY player_name_raw, captured_at DESC
 """
 
 ACC_SQL = """
-SELECT stat, COUNT(*) n, AVG(ABS(actual-mean)) mae, AVG(actual-mean) bias,
-       AVG(CASE WHEN actual BETWEEN lo AND hi THEN 1.0 ELSE 0.0 END) in_range,
-       AVG(mean) avg_proj, AVG(actual) avg_actual
+SELECT stat, COUNT(actual) n, COUNT(*) listed, AVG(ABS(actual-mean)) mae, AVG(actual-mean) bias,
+       AVG(CASE WHEN actual IS NULL THEN NULL WHEN actual BETWEEN lo AND hi THEN 1.0 ELSE 0.0 END) in_range,
+       AVG(mean) FILTER (WHERE actual IS NOT NULL) avg_proj, AVG(actual) avg_actual,
+       COUNT(actual)::float / NULLIF(COUNT(*), 0) played_pct   -- listed players who actually got in the game
 FROM stat_projections sp JOIN games g ON g.id=sp.game_id
-WHERE sp.sport=:sp AND sp.actual IS NOT NULL AND g.start_time > now() - make_interval(days => :days)
+WHERE sp.sport=:sp AND g.completed AND g.boxscore_loaded AND g.start_time > now() - make_interval(days => :days)
 GROUP BY stat
 """
 

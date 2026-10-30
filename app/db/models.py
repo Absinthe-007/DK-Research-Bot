@@ -289,7 +289,7 @@ class Pick(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     close_price: Mapped[int | None] = mapped_column(Integer)
     actual: Mapped[float | None] = mapped_column(Float)
-    result: Mapped[str | None] = mapped_column(String(6))                   # win | loss | push | void
+    result: Mapped[str | None] = mapped_column(String(6))                   # win | loss | push | void | pulled
     profit_units: Mapped[float | None] = mapped_column(Float)
     __table_args__ = (UniqueConstraint("game_id", "player_id", "market_key", "kind", "side", "line"),)
 

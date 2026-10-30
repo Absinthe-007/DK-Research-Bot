@@ -464,6 +464,10 @@ async def sync_boxscores(sport: str, limit: int = 400) -> int:
                     out.append(dict(base, season=int(g.season), week=g.week or 0, position=r.get("position"), **stats))
             model = NbaPlayerGamelog if sport == "NBA" else NflPlayerGame
             n += await upsert(s, model, out, ["player_id", "game_id"])
+            if sport == "NFL" and out:   # ESPN box scores have no position: take it from the roster
+                await s.execute(text("""UPDATE nfl_player_games g SET position=p.position FROM players p
+                    WHERE g.game_id=:g AND g.player_id=p.id AND p.position IS NOT NULL AND p.position <> ''
+                      AND g.position IS DISTINCT FROM p.position"""), {"g": g.id})
             if sport == "NFL" and out:   # target share from team totals
                 await s.execute(text("""UPDATE nfl_player_games p SET target_share = p.targets / NULLIF(t.tt,0)
                     FROM (SELECT team_abbr, SUM(targets) tt FROM nfl_player_games WHERE game_id=:g GROUP BY 1) t

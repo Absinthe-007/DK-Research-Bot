@@ -199,7 +199,7 @@ function accCards(S) {
   const a = (S.accuracy || {})["30d"] || {};
   const keys = SPORT === "NBA" ? ["pts", "reb", "ast", "pra"] : ["pass_yds", "rush_yds", "rec_yds", "receptions", "tackles", "sacks"];
   const cards = keys.filter(k => a[k]).map(k => `<div class="stat"><span>${esc(S.labels[k])} · ${a[k].n} players</span>
-    <b>±${(+a[k].mae).toFixed(1)}</b><span>average miss · ${Math.round(a[k].in_range * 100)}% landed in range</span></div>`);
+    <b>±${(+a[k].mae).toFixed(1)}</b><span>average miss · ${Math.round(a[k].in_range * 100)}% landed in range${a[k].played_pct != null ? ` · ${Math.round(a[k].played_pct * 100)}% of listed played` : ""}</span></div>`);
   return cards.join("") || `<div class="stat" style="grid-column:1/-1"><span>No finished games graded yet. After tonight's games, this shows the average miss
     and how often players landed inside the projected range.</span></div>`;
 }
