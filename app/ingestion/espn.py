@@ -67,12 +67,13 @@ def _roster_athletes(body: dict) -> list[dict]:
 async def sync_rosters(sport: str) -> int:
     async with session_scope() as s:
         teams = (await s.execute(select(Team).where(Team.sport == sport))).scalars().all()
-    rows = []
+    rows, failed = [], 0
     for t in teams:
         try:
             body, _ = await http().get(f"{SITE}/{ESPN_PATH[sport]}/teams/{t.espn_id}/roster", cache_ttl=3600)
         except Exception as e:
             log.warning("roster %s failed: %s", t.abbr, e)
+            failed += 1
             continue
         for a in _roster_athletes(body):
             rows.append(dict(sport=sport, espn_id=str(a["id"]), full_name=a["displayName"],
@@ -80,7 +81,17 @@ async def sync_rosters(sport: str) -> int:
                              position=(a.get("position") or {}).get("abbreviation"),
                              headshot=(a.get("headshot") or {}).get("href")))
     async with session_scope() as s:
-        return await upsert(s, Player, rows, ["sport", "espn_id"], ["full_name", "name_key", "team_abbr", "position", "headshot"])
+        n = await upsert(s, Player, rows, ["sport", "espn_id"], ["full_name", "name_key", "team_abbr", "position", "headshot"])
+        # Released / waived / unsigned players used to keep their old team forever (upsert never clears),
+        # so they could still get a projection for a team they no longer play for. Only do this when
+        # every team's roster came back, so one failed request can't wipe a whole team.
+        if teams and not failed and rows:
+            cleared = (await s.execute(text("""
+                UPDATE players SET team_abbr = NULL
+                WHERE sport=:sp AND team_abbr IS NOT NULL AND NOT (espn_id = ANY(:ids))"""),
+                {"sp": sport, "ids": [r["espn_id"] for r in rows]})).rowcount
+            log.info("rosters %s: %d players synced, %d no longer on any roster", sport, n, cleared)
+        return n
 
 
 async def _ensure_athlete(s, sport: str, espn_id: str, cache: dict[str, int], ref_url: str | None = None) -> int | None:
