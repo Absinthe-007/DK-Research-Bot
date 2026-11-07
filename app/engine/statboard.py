@@ -211,7 +211,10 @@ async def _nba(s, as_of: datetime | None = None) -> list[dict]:
                     continue
                 h = by_player[p.player_id].tail(NBA_LOOKBACK)
                 h = h[h.minutes > 0]
-                if len(h) < 3 or (pd.Timestamp(g.start_time).date() - h.game_date.max()).days > 240:
+                # Rookies / call-ups: 1-2 games THIS season is enough (minutes are shrunk and the ranges
+                # widen with small samples); otherwise need 3 games of history.
+                n_cur = int((h.season == season).sum())
+                if len(h) < (1 if n_cur else 3) or (pd.Timestamp(g.start_time).date() - h.game_date.max()).days > 240:
                     continue
                 mins = h.minutes.to_numpy(float)
                 w = B.ewm_weights(len(h))
@@ -371,7 +374,7 @@ async def _nfl(s, as_of: datetime | None = None) -> list[dict]:
                 if status.get(p.player_id, ("",))[0] in OUT_STATUSES or p.player_id not in by_player:
                     continue
                 h = by_player[p.player_id].tail(NFL_LOOKBACK)
-                if len(h) < 2 or (pd.Timestamp(g.start_time).date() - h.game_date.max()).days > 400:
+                if len(h) < (1 if (h.season == season).any() else 2) or (pd.Timestamp(g.start_time).date() - h.game_date.max()).days > 400:
                     continue
                 grp = _group(p.position) if p.position else h.pgroup.iloc[-1]
                 # must have a role THIS season: appeared in one of the team's last few games (box scores
