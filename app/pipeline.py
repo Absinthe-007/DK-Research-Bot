@@ -69,8 +69,7 @@ async def nightly() -> None:
         await espn.sync_boxscores(sport)
         await _safe(grade, sport)
         await statboard.grade(sport)
-        if today.weekday() == 1:          # Tuesday: refresh rosters (trades, signings)
-            await _safe(espn.sync_rosters, sport)
+        await _safe(espn.sync_rosters, sport)   # every night: trades, signings, releases
     if today.weekday() in (1, 4):          # NFL enrichment after MNF / TNF
         from app.ingestion.nfl_stats import enrich
         await _safe(enrich, today.year if today.month >= 3 else today.year - 1)

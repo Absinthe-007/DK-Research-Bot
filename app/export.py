@@ -54,6 +54,18 @@ WHERE sp.sport=:sp AND g.completed AND g.boxscore_loaded AND g.start_time > now(
 GROUP BY stat
 """
 
+# Coverage: of everyone who actually got on the floor/field in the graded games, how many had a projection.
+COVER_SQL = """
+WITH gg AS (SELECT g.id FROM games g WHERE g.sport=:sp AND g.completed AND g.boxscore_loaded
+              AND g.start_time > now() - make_interval(days => :days)
+              AND EXISTS (SELECT 1 FROM stat_projections sp WHERE sp.game_id=g.id)),
+     played AS (SELECT game_id, player_id FROM {box} WHERE game_id IN (SELECT id FROM gg) {played_filter})
+SELECT (SELECT COUNT(*) FROM gg) games, COUNT(*) played,
+       COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM stat_projections sp
+                         WHERE sp.game_id=played.game_id AND sp.player_id=played.player_id)) projected
+FROM played
+"""
+
 RECENT_SQL = """
 SELECT g.start_time, ht.abbr home, at.abbr away, p.full_name player, p.team_abbr team, sp.stat, sp.mean, sp.lo, sp.hi, sp.actual
 FROM stat_projections sp JOIN players p ON p.id=sp.player_id JOIN games g ON g.id=sp.game_id
@@ -81,14 +93,20 @@ async def export() -> Path:
                                         status=st and st["status"], injury=st and st["injury"], s={})
                 players[key]["s"][r["stat"]] = [r["mean"], r["lo"], r["hi"], int(bool(r["anchored"])),
                                                 r["last5"], r["season_avg"]]
-            acc = {}
+            acc, cover = {}, {}
+            # NFL box scores also list linemen/long snappers; only count positions we project.
+            box, pf = (("nba_player_gamelogs", "AND minutes > 0") if sp == "NBA" else
+                       ("nfl_player_games", "AND player_id IN (SELECT id FROM players WHERE sport='NFL' AND "
+                        "position IN ('QB','RB','FB','WR','TE','PK','K','LB','CB','S','DT','DE','DB','NT','OLB','ILB','MLB','SS','FS'))"))
             for label, days in (("7d", 7), ("30d", 30), ("season", 400)):
                 acc[label] = {r["stat"]: dict(r) for r in (await s.execute(text(ACC_SQL), {"sp": sp, "days": days})).mappings().all()}
+                cover[label] = dict((await s.execute(text(COVER_SQL.format(box=box, played_filter=pf)),
+                                                      {"sp": sp, "days": days})).mappings().one())
             key_stats = ["pts", "reb", "ast", "pra"] if sp == "NBA" else ["pass_yds", "rush_yds", "rec_yds", "receptions", "tackles", "sacks"]
             recent = [dict(r) for r in (await s.execute(text(RECENT_SQL), {"sp": sp, "stats": key_stats})).mappings().all()]
             board["sports"][sp] = jsonable({
                 "labels": {k: v[0] for k, v in defs.items()} | ({"td_prob": "TD %"} if sp == "NFL" else {}),
-                "games": games, "players": list(players.values()), "injuries": inj, "accuracy": acc, "recent": recent,
+                "games": games, "players": list(players.values()), "injuries": inj, "accuracy": acc, "coverage": cover, "recent": recent,
             })
         board["last_runs"] = jsonable([dict(r) for r in (await s.execute(text("""
             SELECT DISTINCT ON (job) job, finished_at, ok, rows FROM ingest_runs ORDER BY job, started_at DESC"""
