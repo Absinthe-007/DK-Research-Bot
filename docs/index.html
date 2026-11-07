@@ -197,11 +197,26 @@ function gameBlock(g, players, injuries) {
 
 function accCards(S) {
   const a = (S.accuracy || {})["30d"] || {};
-  const keys = SPORT === "NBA" ? ["pts", "reb", "ast", "pra"] : ["pass_yds", "rush_yds", "rec_yds", "receptions", "tackles", "sacks"];
-  const cards = keys.filter(k => a[k]).map(k => `<div class="stat"><span>${esc(S.labels[k])} · ${a[k].n} players</span>
-    <b>±${(+a[k].mae).toFixed(1)}</b><span>average miss · ${Math.round(a[k].in_range * 100)}% landed in range${a[k].played_pct != null ? ` · ${Math.round(a[k].played_pct * 100)}% of listed played` : ""}</span></div>`);
-  return cards.join("") || `<div class="stat" style="grid-column:1/-1"><span>No finished games graded yet. After tonight's games, this shows the average miss
+  const cv = (S.coverage || {})["30d"];
+  // every stat on the board, headline stats first
+  const first = SPORT === "NBA" ? ["pts", "reb", "ast", "pra", "fg3m", "stl", "blk", "tov", "minutes"]
+                                : ["pass_yds", "rush_yds", "rec_yds", "receptions", "tackles", "sacks"];
+  const keys = [...first.filter(k => a[k]), ...Object.keys(a).filter(k => !first.includes(k) && k !== "td_prob" && S.labels[k])];
+  const fmt = v => Math.abs(v) >= 10 ? (+v).toFixed(0) : (+v).toFixed(1);
+  const cards = keys.map(k => {
+    const r = a[k], b = +r.bias;
+    const lean = Math.abs(b) < 0.05 ? "no lean" : `actuals ran ${fmt(Math.abs(b))} ${b > 0 ? "over" : "under"}`;
+    return `<div class="stat"><span>${esc(S.labels[k])} · ${r.n.toLocaleString()} player-games</span>
+    <b>±${fmt(r.mae)}</b><span>average miss · ${Math.round(r.in_range * 100)}% landed in range · ${lean}</span></div>`;
+  });
+  if (!cards.length) return `<div class="stat" style="grid-column:1/-1"><span>No finished games graded yet. After tonight's games, this shows the average miss
     and how often players landed inside the projected range.</span></div>`;
+  const anyK = keys[0], played = a[anyK] && a[anyK].played_pct;
+  const cover = cv && cv.played ? `<div class="stat" style="grid-column:1/-1"><span>Graded over ${cv.games} finished games:
+    ${cv.projected.toLocaleString()} of the ${cv.played.toLocaleString()} players who got in (${Math.round(cv.projected / cv.played * 100)}%) had a projection and are counted above
+    · ${(cv.played - cv.projected).toLocaleString()} played without one (mostly end-of-bench minutes)
+    ${played != null ? `· ${Math.round(played * 100)}% of projected players actually played (DNPs aren't counted, like a voided prop)` : ""}</span></div>` : "";
+  return cover + cards.join("");
 }
 
 function render() {
