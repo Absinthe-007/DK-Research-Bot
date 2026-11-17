@@ -56,8 +56,8 @@ button{font:inherit;color:inherit;cursor:pointer}
 .tile.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 8px 24px -10px var(--accent)}
 .tile .tm{display:flex;align-items:center;gap:8px;height:26px}
 .tile .tm b{font:800 17px var(--head);letter-spacing:.04em;flex:1}
-.tile .tm .sp{font-size:12.5px;font-weight:700;color:var(--muted)}
-.tile .tm .sp.fav{color:var(--text)}
+.tile .tm .sp{font:800 19px var(--head);letter-spacing:.02em;color:var(--muted);font-variant-numeric:tabular-nums}
+.tile .tm .sp.fav{color:var(--accent)}
 .tile .meta{margin-top:6px;padding-top:6px;border-top:1px dashed var(--line);display:flex;justify-content:space-between;font-size:11.5px;color:var(--muted)}
 .tile .meta b{color:var(--text);font-weight:700}
 .tile .pk{margin-top:6px;display:flex;align-items:center;gap:6px;font:800 12px var(--head);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
@@ -323,8 +323,8 @@ function gameBlock(g, players, injuries) {
   const fav = L.spread == null ? "" : L.spread < 0 ? `${g.home} ${spread(L.spread)}` : L.spread > 0 ? `${g.away} ${spread(-L.spread)}` : "Pick'em";
   return `<section class="game"><div class="ghead"><div class="vs">${logo(g.away)}${esc(g.away)}<i>@</i>${logo(g.home)}${esc(g.home)}</div>
     <div class="info"><span><b>${when(g.start_time, {weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit"})}</b>${g.week ? " · Week " + g.week : ""}</span>
-      ${L.total != null ? `<span>DK <b>${esc(fav)}</b> · O/U <b>${esc(L.total)}</b></span>` : ""}
-      ${g.win ? `<span class="win">${logo(g[g.win.pick])}Projected winner ${esc(g[g.win.pick])} · ${pct(g.win[g.win.pick])}${g.win.score_home != null ? ` · ${esc(g.win.score_away)}–${esc(g.win.score_home)}` : ""}</span>` : ""}
+      ${L.total != null ? `<span>O/U <b>${esc(L.total)}</b></span>` : ""}
+      ${g.win ? `<span class="win">${logo(g[g.win.pick])}Projected winner ${esc(g[g.win.pick])} · ${pct(g.win[g.win.pick])}${g.win.score_home != null ? ` · ${esc(g.away)} ${esc(g.win.score_away)} – ${esc(g.home)} ${esc(g.win.score_home)}` : ""}</span>` : ""}
       <span>${esc(g.venue || "")}${wx ? " · " + esc(wx) : ""}</span></div>
     <div class="tags">${rest.map(r => `<span class="tag">${esc(r)}</span>`).join("")}
       ${outs.length ? `<span class="tag red" title="${esc(outs.map(o => `${o.player} (${o.team}, ${o.status})`).join(", "))}">${outs.length} out/doubtful</span>` : ""}</div></div>
@@ -391,13 +391,13 @@ function recordTable() {
 function winnersTable(pg) {
   const rows = pg.filter(g => g.win);
   $("#winhint").textContent = rows.length ? "From DraftKings' moneyline with the margin removed" : "";
-  $("#winners").innerHTML = `<tr><th>Game</th><th>Starts</th><th>Projected winner</th><th>Chance</th><th>Projected score</th><th>DK spread</th><th>O/U</th></tr>` +
+  $("#winners").innerHTML = `<tr><th>Game</th><th>Starts</th><th>Projected winner</th><th>Chance</th><th>Projected score</th><th>O/U</th></tr>` +
     (rows.map(g => { const w = g.win, win = g[w.pick], L = g.lines || {};
       return `<tr><td>${esc(g.away)} @ ${esc(g.home)}</td><td>${when(g.start_time, {weekday: "short", hour: "numeric", minute: "2-digit"})}</td>
       <td><span class="win">${logo(win)}${esc(win)}</span></td><td><b>${pct(w[w.pick])}</b></td>
       <td>${w.score_home != null ? `${esc(g.away)} ${esc(w.score_away)} – ${esc(g.home)} ${esc(w.score_home)}` : "–"}</td>
-      <td>${L.spread == null ? "–" : L.spread < 0 ? esc(g.home) + " " + spread(L.spread) : esc(g.away) + " " + spread(-L.spread)}</td><td>${L.total ?? "–"}</td></tr>`; }).join("") ||
-      `<tr><td colspan="7" style="color:var(--muted);text-align:left">Winner picks appear once DraftKings posts moneylines for the upcoming games.</td></tr>`);
+      <td>${L.total ?? "–"}</td></tr>`; }).join("") ||
+      `<tr><td colspan="6" style="color:var(--muted);text-align:left">Winner picks appear once DraftKings posts moneylines for the upcoming games.</td></tr>`);
 }
 
 /* ---------- main render ---------- */
@@ -415,10 +415,10 @@ function render() {
   for (const g of pg) {
     const day = dayKey(g.start_time);
     if (day !== last) { strip += `<div class="day">${esc(day)}</div>`; last = day; }
-    const L = g.lines || {}, hs = L.spread, as = hs == null ? null : -hs;
+    const L = g.lines || {}, W = g.win, hs = W && W.score_home != null ? W.score_home : null, as = W && W.score_away != null ? W.score_away : null;
     strip += `<button class="tile ${String(g.id) === GAME ? "on" : ""}" data-g="${g.id}">
-      <div class="tm">${logo(g.away)}<b>${esc(g.away)}</b><span class="sp ${as != null && as < 0 ? "fav" : ""}">${esc(spread(as))}</span></div>
-      <div class="tm">${logo(g.home)}<b>${esc(g.home)}</b><span class="sp ${hs != null && hs < 0 ? "fav" : ""}">${esc(spread(hs))}</span></div>
+      <div class="tm">${logo(g.away)}<b>${esc(g.away)}</b><span class="sp ${W && W.pick === "away" ? "fav" : ""}">${as == null ? "" : esc(as)}</span></div>
+      <div class="tm">${logo(g.home)}<b>${esc(g.home)}</b><span class="sp ${W && W.pick === "home" ? "fav" : ""}">${hs == null ? "" : esc(hs)}</span></div>
       <div class="meta"><b>${when(g.start_time, {hour: "numeric", minute: "2-digit"})}</b><span>${L.total != null ? "O/U " + esc(L.total) : counts[g.id] + " players"}</span></div>
       ${g.win ? `<div class="pk">Pick ${esc(g[g.win.pick])} ${pct(g.win[g.win.pick])}<i><b style="width:${g.win[g.win.pick] * 100}%"></b></i></div>` : ""}</button>`;
   }
