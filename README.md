@@ -22,6 +22,14 @@ A play is flagged when model P(win) minus DraftKings' breakeven is at least **3.
 
 Every flagged play is frozen at its last pre-game price. It's graded after the box score comes in, and the dashboard shows the hit rate, units, ROI and closing-line value.
 
+## Dashboard
+
+* Scoreboard tiles for every upcoming game with DraftKings spread, total and a **projected winner** (moneyline with the margin removed; graded against finished games).
+* Every player's projected line. Under each number you can show the **DraftKings line** (▲/▼ = projection above/below it) or the likely range. Click a player for line prices and the model's over/under chance.
+* Scorecard: share of stat lines inside the projected range, average miss, winner-pick record and the graded record of flagged plays.
+
+Model notes (backtested on 105 NBA games, Nov 2026): longer half-lives for noisy stats, DK game total as a scoring-environment factor and spread-based blowout minutes were all tested and moved points error by < 0.02, so they ship **off** (`STATBOARD_TUNE`, see `app/engine/statboard.py`). Per-market blend weights (`MODEL_WEIGHT_BY_MARKET`) are on: the market alone is best for points/PRA, the model adds more for counting stats. Flagged plays have not beaten DraftKings' margin so far (see the track record card), so treat them as research leads.
+
 ## When it runs
 
 A planner job ticks every 15 minutes (`7,22,37,52 * * * *`). It makes 10 ESPN requests and needs no database. It launches a full refresh only at checkpoints measured back from each game's **actual start time**:

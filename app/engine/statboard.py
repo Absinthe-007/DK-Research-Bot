@@ -67,6 +67,54 @@ NBA_PRIOR_GAMES = 3.0       # current-season minutes outweigh the long window af
 NFL_MIN_TEAM_GP, NFL_ROLE_WINDOW = 2, 3   # NFL: must show up in one of the team's last 3 box scores
 
 
+# --- tunable knobs (overridable for backtests: STATBOARD_TUNE='{"env_beta":0.6}') ----------------
+import json as _json
+import os as _os
+
+TUNE = dict(
+    rate_hl=4.0,        # recency half-life (games) for per-minute rates; per-stat overrides below
+    min_hl=4.0,         # half-life for minutes
+    env_beta=0.0,       # exponent on (DK game total / team's usual game total)
+    pace_w=0.5,         # weight on the box-score pace factor (kept alongside the total)
+    blow_k=0.0,         # minutes lost per point of spread beyond blow_thr (starters), fraction
+    blow_thr=7.0,
+    bias_pts=0.0,       # fraction of the persistent over-projection removed
+)
+TUNE.update(_json.loads(_os.environ.get("STATBOARD_TUNE", "{}")))
+# noisy efficiency stats deserve a longer memory than minutes/usage
+STAT_HL = {"fg3m": 10.0, "stl": 14.0, "blk": 14.0, "tov": 10.0, "ast": 7.0, "reb": 7.0, "pts": 6.0, "pra": 6.0}
+STAT_HL.update({k[3:]: v for k, v in TUNE.items() if k.startswith("hl_")})
+USE_STAT_HL = bool(TUNE.get("stat_hl", 0))
+
+
+async def _game_lines(s, games: pd.DataFrame, now: datetime) -> dict:
+    """{game_id: {"total": float|None, "spread_home": float|None}} - latest DK lines captured before `now`."""
+    if games.empty:
+        return {}
+    rows = (await s.execute(text("""
+        SELECT DISTINCT ON (game_id, market_type, side) game_id, market_type, side, point
+        FROM odds_snapshots WHERE game_id = ANY(:g) AND captured_at <= :now AND market_type IN ('totals','spreads')
+        ORDER BY game_id, market_type, side, captured_at DESC"""), {"g": games.game_id.tolist(), "now": now})).all()
+    out: dict = {}
+    for gid, mt, side, pt in rows:
+        d = out.setdefault(int(gid), {"total": None, "spread_home": None})
+        if mt == "totals" and side == "over":
+            d["total"] = pt
+        elif mt == "spreads" and side == "home":
+            d["spread_home"] = pt
+    return out
+
+
+async def _team_totals(s, sport: str, now: datetime, season) -> dict:
+    """team -> (avg combined points in its completed games this season, games)."""
+    rows = (await s.execute(text("""
+        SELECT t.abbr, AVG(g.home_score + g.away_score) avg_total, COUNT(*) n FROM games g
+        JOIN teams t ON t.id IN (g.home_team_id, g.away_team_id)
+        WHERE g.sport=:sp AND g.completed AND g.season=:se AND g.start_time < :now AND g.home_score IS NOT NULL
+        GROUP BY t.abbr"""), {"sp": sport, "se": str(season), "now": now})).all()
+    return {a: (float(v), int(n)) for a, v, n in rows}
+
+
 def _group(pos: str | None) -> str:
     return POS_GROUP.get(pos or "", "DEF")
 
@@ -186,6 +234,10 @@ async def _nba(s, as_of: datetime | None = None) -> list[dict]:
     cvs = {st: _league_cv(logs, st, 10) for st in stats + ["minutes"]}
     status = _status_map(inj)
     anchor = _anchor_map(anchors)
+    now_ = as_of or datetime.now(timezone.utc)
+    lines = await _game_lines(s, games, now_)
+    tt = await _team_totals(s, "NBA", now_, season)
+    lg_tot = (sum(v * n for v, n in tt.values()) / max(1, sum(n for _, n in tt.values()))) if tt else None
     mk_of = {k: v[2] for k, v in NBA_STATS.items()}
     fam = {k: v[1] for k, v in NBA_STATS.items()}
     rest_of = {(r.game_id, r.abbr): r for r in rest.itertuples()} if not rest.empty else {}
@@ -218,7 +270,7 @@ async def _nba(s, as_of: datetime | None = None) -> list[dict]:
                     continue
                 mins = h.minutes.to_numpy(float)
                 w = B.ewm_weights(len(h))
-                min_mu, _ = B.ewm_mean_std(mins)
+                min_mu, _ = B.ewm_mean_std(mins, TUNE["min_hl"])
                 # The 25-game window reaches back into last season (incl. April tank/rest games),
                 # so early in the year it says nothing about TODAY's rotation. Lean on this season.
                 tg = team_games.get(side, [])
@@ -230,13 +282,22 @@ async def _nba(s, as_of: datetime | None = None) -> list[dict]:
                         continue          # not in the rotation this season (and not just back from injury)
                 if mine:
                     hc = h[h.game_id.isin(mine)]
-                    cur_mu, _ = B.ewm_mean_std(hc.minutes.to_numpy(float))
+                    cur_mu, _ = B.ewm_mean_std(hc.minutes.to_numpy(float), TUNE["min_hl"])
                     min_mu = B.shrink(cur_mu, len(hc), min_mu, NBA_PRIOR_GAMES)
                 r = rest_of.get((g.game_id, side))
                 m_fac, _ = B.nba_minutes_factor(bool(r and r.is_b2b), bool(r and r.is_3in4))
+                ln = lines.get(int(g.game_id), {})
+                sp_side = None if ln.get("spread_home") is None else (ln["spread_home"] if side == g.home else -ln["spread_home"])
+                if TUNE["blow_k"] and sp_side is not None:      # lopsided games: starters sit the fourth quarter
+                    over = max(0.0, abs(sp_side) - TUNE["blow_thr"])
+                    m_fac *= max(0.88, 1 - TUNE["blow_k"] * over * (1.0 if sp_side < 0 else 0.6) * min(1.0, min_mu / 34))
+                env_f = 1.0
+                if TUNE["env_beta"] and ln.get("total") and side in tt and lg_tot:
+                    base_t = (tt[side][0] * tt[side][1] + lg_tot * 6) / (tt[side][1] + 6)
+                    env_f = (ln["total"] / base_t) ** TUNE["env_beta"]
                 pace_f = 1.0
                 if lg_pace and side in poss and opp in poss:
-                    pace_f = 1 + 0.5 * (B.nba_pace_factor(poss[side], poss[opp], lg_pace) - 1)
+                    pace_f = 1 + TUNE["pace_w"] * (B.nba_pace_factor(poss[side], poss[opp], lg_pace) - 1)
                 mate = absent.get(side)
                 share = 0.0
                 if mate and mate != p.player_id:
@@ -249,7 +310,7 @@ async def _nba(s, as_of: datetime | None = None) -> list[dict]:
                 sds["minutes"] = B.shrink(sd_min if sd_min == sd_min else 0, len(h), cvs["minutes"] * min_mu, 10) if min_mu else 1
                 for st in stats:
                     vals = h[st].to_numpy(float)
-                    rate, _ = B.ewm_mean_std(vals / mins)
+                    rate, _ = B.ewm_mean_std(vals / mins, STAT_HL.get(st, TUNE["rate_hl"]) if USE_STAT_HL else TUNE["rate_hl"])
                     u = 1.0
                     if mate and mate != p.player_id:
                         mg = games_of.get(mate, set())
@@ -259,7 +320,9 @@ async def _nba(s, as_of: datetime | None = None) -> list[dict]:
                         rwo = wo[st].sum() / wo.minutes.sum() if len(wo) and wo.minutes.sum() else 0
                         wwf = B.with_without_factor(rw, len(with_m), rwo, len(wo))
                         u = wwf / ((1 - share) + share * wwf)
-                    mean = max(0.0, rate * min_mu * m_fac * oppf.get((opp, None, st), 1.0) * pace_f * u)
+                    mean = max(0.0, rate * min_mu * m_fac * oppf.get((opp, None, st), 1.0) * pace_f * env_f * u)
+                    if st in ("pts", "pra") and TUNE["bias_pts"]:
+                        mean *= 1 - TUNE["bias_pts"]
                     _, sd_raw = B.ewm_mean_std(vals)
                     raw_mu = float(np.average(vals, weights=w)) or 1e-6
                     sds[st] = max(B_shrink_sd(sd_raw * mean / raw_mu, len(h), mean, cvs[st]), 0.5 * mean ** 0.5)

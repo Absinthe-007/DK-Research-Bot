@@ -104,10 +104,11 @@ async def scan(sport: str) -> int:
             if ck in anchors:
                 m_mkt, line0 = anchors[ck]
                 c = calib.get(ck[2], 1.0)
-                blended = st.model_weight * proj.mean * c + (1 - st.model_weight) * m_mkt
+                w = st.model_weight_for(ck[2])
+                blended = w * proj.mean * c + (1 - w) * m_mkt
                 anchored = refit_at_mean(proj.dist, blended)
                 proj.inputs.update(model_mean=proj.mean, slate_calibration=c, market_mean=m_mkt,
-                                   blended_mean=blended, model_weight=st.model_weight, anchor_line=line0)
+                                   blended_mean=blended, model_weight=w, anchor_line=line0)
                 gap = abs(proj.mean * c - m_mkt) / max(m_mkt, 0.5)
                 if gap > st.max_model_market_gap:
                     # A 30%+ disagreement is almost always news/role the box scores can't see
