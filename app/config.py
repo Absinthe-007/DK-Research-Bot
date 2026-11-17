@@ -4,6 +4,13 @@ from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+MODEL_WEIGHT_BY_MARKET = {
+    "player_points": 0.20, "player_points_rebounds_assists": 0.25,
+    "player_assists": 0.55, "player_rebounds": 0.50, "player_threes": 0.55,
+    "player_steals": 0.55, "player_blocks": 0.50, "player_reception_yds": 0.55,
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -26,6 +33,11 @@ class Settings(BaseSettings):
     max_stake_pct: float = 0.02
     max_total_exposure_pct: float = 0.10
     bankroll: float = 1000.0
+
+    def model_weight_for(self, market_key: str) -> float:
+        """Per-market model weight. Backtested on ~8k graded NBA projections: the market alone is best for
+        points/PRA (high-volume, heavily-bet), while counting stats gain from leaning on the model more."""
+        return MODEL_WEIGHT_BY_MARKET.get(market_key, self.model_weight)
 
     @property
     def user_agent(self) -> str:
