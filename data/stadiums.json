@@ -1,0 +1,197 @@
+{
+  "_comment": "Static NFL home stadiums keyed by ESPN team abbreviation. roof: open | dome | retractable. Weather is skipped for dome and retractable (roof is normally closed in bad weather). SoFi is a fixed canopy with open sides; it is treated as dome. Coordinates are approximate (a few hundred metres is plenty for a forecast grid).",
+  "stadiums": {
+    "ARI": {
+      "stadium": "State Farm Stadium",
+      "lat": 33.5276,
+      "lon": -112.2626,
+      "roof": "retractable"
+    },
+    "ATL": {
+      "stadium": "Mercedes-Benz Stadium",
+      "lat": 33.7554,
+      "lon": -84.401,
+      "roof": "retractable"
+    },
+    "BAL": {
+      "stadium": "M&T Bank Stadium",
+      "lat": 39.278,
+      "lon": -76.6227,
+      "roof": "open"
+    },
+    "BUF": {
+      "stadium": "Highmark Stadium",
+      "lat": 42.7738,
+      "lon": -78.787,
+      "roof": "open"
+    },
+    "CAR": {
+      "stadium": "Bank of America Stadium",
+      "lat": 35.2258,
+      "lon": -80.8528,
+      "roof": "open"
+    },
+    "CHI": {
+      "stadium": "Soldier Field",
+      "lat": 41.8623,
+      "lon": -87.6167,
+      "roof": "open"
+    },
+    "CIN": {
+      "stadium": "Paycor Stadium",
+      "lat": 39.0955,
+      "lon": -84.5161,
+      "roof": "open"
+    },
+    "CLE": {
+      "stadium": "Huntington Bank Field",
+      "lat": 41.5061,
+      "lon": -81.6995,
+      "roof": "open"
+    },
+    "DAL": {
+      "stadium": "AT&T Stadium",
+      "lat": 32.7473,
+      "lon": -97.0945,
+      "roof": "retractable"
+    },
+    "DEN": {
+      "stadium": "Empower Field at Mile High",
+      "lat": 39.7439,
+      "lon": -105.0201,
+      "roof": "open"
+    },
+    "DET": {
+      "stadium": "Ford Field",
+      "lat": 42.34,
+      "lon": -83.0456,
+      "roof": "dome"
+    },
+    "GB": {
+      "stadium": "Lambeau Field",
+      "lat": 44.5013,
+      "lon": -88.0622,
+      "roof": "open"
+    },
+    "HOU": {
+      "stadium": "NRG Stadium",
+      "lat": 29.6847,
+      "lon": -95.4107,
+      "roof": "retractable"
+    },
+    "IND": {
+      "stadium": "Lucas Oil Stadium",
+      "lat": 39.7601,
+      "lon": -86.1639,
+      "roof": "retractable"
+    },
+    "JAX": {
+      "stadium": "EverBank Stadium",
+      "lat": 30.3239,
+      "lon": -81.6373,
+      "roof": "open"
+    },
+    "KC": {
+      "stadium": "GEHA Field at Arrowhead Stadium",
+      "lat": 39.0489,
+      "lon": -94.4839,
+      "roof": "open"
+    },
+    "LV": {
+      "stadium": "Allegiant Stadium",
+      "lat": 36.0909,
+      "lon": -115.1833,
+      "roof": "dome"
+    },
+    "LAC": {
+      "stadium": "SoFi Stadium",
+      "lat": 33.9535,
+      "lon": -118.3392,
+      "roof": "dome"
+    },
+    "LAR": {
+      "stadium": "SoFi Stadium",
+      "lat": 33.9535,
+      "lon": -118.3392,
+      "roof": "dome"
+    },
+    "MIA": {
+      "stadium": "Hard Rock Stadium",
+      "lat": 25.958,
+      "lon": -80.2389,
+      "roof": "open"
+    },
+    "MIN": {
+      "stadium": "U.S. Bank Stadium",
+      "lat": 44.9735,
+      "lon": -93.2575,
+      "roof": "dome"
+    },
+    "NE": {
+      "stadium": "Gillette Stadium",
+      "lat": 42.0909,
+      "lon": -71.2643,
+      "roof": "open"
+    },
+    "NO": {
+      "stadium": "Caesars Superdome",
+      "lat": 29.9511,
+      "lon": -90.0812,
+      "roof": "dome"
+    },
+    "NYG": {
+      "stadium": "MetLife Stadium",
+      "lat": 40.8135,
+      "lon": -74.0745,
+      "roof": "open"
+    },
+    "NYJ": {
+      "stadium": "MetLife Stadium",
+      "lat": 40.8135,
+      "lon": -74.0745,
+      "roof": "open"
+    },
+    "PHI": {
+      "stadium": "Lincoln Financial Field",
+      "lat": 39.9008,
+      "lon": -75.1675,
+      "roof": "open"
+    },
+    "PIT": {
+      "stadium": "Acrisure Stadium",
+      "lat": 40.4468,
+      "lon": -80.0158,
+      "roof": "open"
+    },
+    "SF": {
+      "stadium": "Levi's Stadium",
+      "lat": 37.403,
+      "lon": -121.97,
+      "roof": "open"
+    },
+    "SEA": {
+      "stadium": "Lumen Field",
+      "lat": 47.5952,
+      "lon": -122.3316,
+      "roof": "open"
+    },
+    "TB": {
+      "stadium": "Raymond James Stadium",
+      "lat": 27.9759,
+      "lon": -82.5033,
+      "roof": "open"
+    },
+    "TEN": {
+      "stadium": "Nissan Stadium",
+      "lat": 36.1665,
+      "lon": -86.7713,
+      "roof": "open"
+    },
+    "WSH": {
+      "stadium": "Northwest Stadium",
+      "lat": 38.9076,
+      "lon": -76.8645,
+      "roof": "open"
+    }
+  }
+}
