@@ -247,3 +247,52 @@ def test_nba_onoff_stops_after_consecutive_failures(monkeypatch):
     monkeypatch.setattr(nb, "upsert", fake_upsert)
     asyncio.run(nb.sync_onoff.__wrapped__("2026-27") if hasattr(nb.sync_onoff, "__wrapped__") else nb.sync_onoff("2026-27"))
     assert len(calls) == nb.MAX_CONSECUTIVE_FAILURES  # not all 30 teams
+
+
+def test_weather_stops_when_open_meteo_hangs(monkeypatch):
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+    from app.ingest import weather_feed as wf
+
+    start = datetime.now(timezone.utc) + timedelta(days=2)
+    games = [(i, start, "BUF") for i in range(6)]
+
+    class _R:
+        def all(self): return games
+
+    class _S:
+        async def execute(self, *a, **k): return _R()
+
+    class _Ctx:
+        async def __aenter__(self): return _S()
+        async def __aexit__(self, *a): return False
+
+    calls = []
+
+    async def hang(lat, lon, kickoff):
+        calls.append(1)
+        await asyncio.sleep(3600)
+
+    async def fake_upsert(*a, **k): return 0
+
+    monkeypatch.setattr(wf, "session_scope", lambda: _Ctx())
+    monkeypatch.setattr(wf, "fetch_kickoff_weather", hang)
+    monkeypatch.setattr(wf, "upsert", fake_upsert)
+    monkeypatch.setattr(wf, "CALL_TIMEOUT", 0.05)
+    n = asyncio.run(wf.sync_kickoff_weather.__wrapped__(8) if hasattr(wf.sync_kickoff_weather, "__wrapped__") else wf.sync_kickoff_weather(8))
+    assert n == 0 and len(calls) == wf.MAX_CONSECUTIVE_FAILURES
+
+
+def test_pipeline_step_timeout_moves_on(monkeypatch):
+    import asyncio
+    from app import pipeline_v2 as pv
+
+    async def hang():
+        await asyncio.sleep(3600)
+
+    async def ok():
+        return 7
+
+    monkeypatch.setattr(pv, "STEP_TIMEOUT", 0.05)
+    assert asyncio.run(pv._safe(hang)) is None
+    assert asyncio.run(pv._safe(ok)) == 7

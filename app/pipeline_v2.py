@@ -23,9 +23,15 @@ log = logging.getLogger("pipeline_v2")
 SPORTS = ("NBA", "NFL")
 
 
+STEP_TIMEOUT = 600.0   # seconds; a rate-limited API can ask the shared HTTP client to sleep for hours
+
+
 async def _safe(fn, *a, **kw):
     try:
-        return await fn(*a, **kw)
+        return await asyncio.wait_for(fn(*a, **kw), STEP_TIMEOUT)
+    except asyncio.TimeoutError:
+        log.warning("%s timed out after %.0fs; moving on", getattr(fn, "__name__", fn), STEP_TIMEOUT)
+        return None
     except Exception as e:
         log.warning("%s failed: %s", getattr(fn, "__name__", fn), e)
         return None
