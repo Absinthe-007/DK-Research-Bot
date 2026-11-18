@@ -24,8 +24,9 @@ from app.utils.names import name_key
 log = logging.getLogger(__name__)
 
 RATE_LIMIT_SECONDS = 1.5
-REQUEST_TIMEOUT = 30
-MAX_ATTEMPTS = 3
+REQUEST_TIMEOUT = 20
+MAX_ATTEMPTS = 2
+MAX_CONSECUTIVE_FAILURES = 2  # stats.nba.com often blocks datacenter IPs: stop early instead of hanging
 
 NBA_HEADERS = {
     "Host": "stats.nba.com",
@@ -219,11 +220,17 @@ async def sync_onoff(season: str | None = None) -> int:
 
     season = season or current_season_str()
     rows: list[dict] = []
+    misses = 0
     for t in teams.get_teams():
         try:
             rows += await asyncio.to_thread(fetch_team_onoff, t["id"], season)
+            misses = 0
         except Exception as e:
+            misses += 1
             log.warning("on/off failed for %s: %s", t["abbreviation"], e)
+            if misses >= MAX_CONSECUTIVE_FAILURES:
+                log.warning("on/off: %d failures in a row (stats.nba.com is probably blocking this IP); skipping the rest", misses)
+                break
     async with session_scope() as s:
         return await upsert(s, NbaOnOff, rows, ["season", "team_id", "nba_person_id", "court_status"])
 
