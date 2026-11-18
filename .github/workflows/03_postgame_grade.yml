@@ -1,0 +1,53 @@
+name: 03 postgame grade
+
+# 4:00 AM EST = 09:00 UTC (5:00 AM EDT in summer). Loads final box scores and participation evidence, grades open
+# picks (active players with 0 stats are misses; only confirmed non-participants are voided), and logs CLV.
+# The original nightly job in pipeline.yml (09:41 UTC) still runs and is unaffected.
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      sport:
+        type: choice
+        options: [both, NBA, NFL]
+        default: both
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+env:
+  DATA_TAG: data
+  DATABASE_URL: postgresql+asyncpg://dkbot:dkbot@localhost:5432/dkbot
+  PGURL: postgresql://dkbot:dkbot@localhost:5432/dkbot
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  grade:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Start Postgres and restore the database
+        id: restore
+        run: scripts/ci_db.sh restore
+      - name: Grade settled picks and log CLV
+        env:
+          IN_SPORT: ${{ inputs.sport }}
+        run: |
+          if [ "$IN_SPORT" = "NBA" ] || [ "$IN_SPORT" = "NFL" ]; then ARGS="--sport $IN_SPORT"; else ARGS=""; fi
+          python -m app.pipeline_v2 grade $ARGS
+      - name: Original vs adjusted accuracy (read-only; empty until the opt-in layer has graded rows)
+        run: python -m app.pipeline_v2 adjust-report
+      - name: Save database to the data release
+        if: always() && steps.restore.outcome == 'success'
+        run: scripts/ci_db.sh save

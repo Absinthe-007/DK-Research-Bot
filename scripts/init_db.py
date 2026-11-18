@@ -9,6 +9,7 @@ import asyncio
 from sqlalchemy import text
 
 from app.db import models as M
+from app.db import models_ext  # noqa: F401  (registers the additive upgrade tables with Base.metadata)
 from app.db.base import Base, engine, session_scope, upsert
 from app.db.reference import MARKETS
 

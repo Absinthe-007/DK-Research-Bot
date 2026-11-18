@@ -1,0 +1,54 @@
+name: 01 daily ingest
+
+# 8:00 AM EST = 13:00 UTC. GitHub cron is UTC-only and ignores daylight saving, so this fires at 9:00 AM EDT in summer.
+# Pulls the nflverse feeds (snaps, PBP usage, injuries, depth charts), nba_api feeds (game logs, on/off, live lineups),
+# kickoff weather for outdoor NFL games, and a first odds snapshot (the "open" for most lines).
+on:
+  schedule:
+    - cron: "0 13 * * *"
+  workflow_dispatch:
+    inputs:
+      sport:
+        type: choice
+        options: [both, NBA, NFL]
+        default: both
+
+permissions:
+  contents: write
+
+# One database writer at a time. The database round-trips through a single release asset (db.dump), so two
+# overlapping jobs would overwrite each other's data. Same group as pipeline.yml; do not rename one without the other.
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+env:
+  DATA_TAG: data
+  DATABASE_URL: postgresql+asyncpg://dkbot:dkbot@localhost:5432/dkbot
+  PGURL: postgresql://dkbot:dkbot@localhost:5432/dkbot
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  ingest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Start Postgres and restore the database
+        id: restore
+        run: scripts/ci_db.sh restore
+      - name: Ingest feeds
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}   # optional; Kalshi and Polymarket need no key
+          IN_SPORT: ${{ inputs.sport }}
+        run: |
+          if [ "$IN_SPORT" = "NBA" ] || [ "$IN_SPORT" = "NFL" ]; then ARGS="--sport $IN_SPORT"; else ARGS=""; fi
+          python -m app.pipeline_v2 ingest $ARGS
+      - name: Save database to the data release
+        if: always() && steps.restore.outcome == 'success'
+        run: scripts/ci_db.sh save

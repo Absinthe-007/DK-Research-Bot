@@ -90,3 +90,45 @@ ESPN remains the primary source. If you add a free key from the-odds-api.com, th
 
 Setup: repo **Settings -> Secrets and variables -> Actions -> New repository secret**, name `ODDS_API_KEY`. Remove the secret to turn it off.
 Credit use is capped (`odds_api_max_credits_per_run`, a reserve floor `odds_api_min_remaining`, and a per-game re-fetch gap) so the free tier (~500 credits/month) is not exhausted; tune them in `app/config.py`.
+
+
+## Prediction upgrades (additive)
+
+These modules add new data feeds, helpers and a second grader **without changing the original projections**: `projector.py`,
+`statboard.py`, `scanner.py`, `pipeline.py` and the existing tables are untouched. New data lands in new tables
+(`app/db/models_ext.py`) and the helpers are opt-in, so nothing feeds back into a projection until you wire it in.
+
+| Piece | Where | Notes |
+|---|---|---|
+| NFL feed | `app/ingest/nfl_feed.py` | nflreadpy: snap counts, PBP targets/carries, weekly injuries, depth charts |
+| NBA feed | `app/ingest/nba_feed.py` | nba_api: game logs, `TeamPlayerOnOffDetails`, live scoreboard lineups; browser headers, 1.5 s between calls. stats.nba.com often blocks GitHub IPs, so each fetch is best-effort |
+| Weather | `app/ingest/weather_feed.py` + `data/stadiums.json` | Open-Meteo kickoff-hour wind/precip; dome and retractable stadiums are skipped |
+| Markets | `app/ingest/market_feed.py` | The Odds API (`ODDS_API_KEY`), Kalshi and Polymarket public quotes; `market_lines` keeps OPEN vs CURRENT and freezes at the start (= closing line) |
+| Engine | `app/engine/{devig,redistribution,count_models,calibration}.py` | de-vig helpers, injury minutes/usage redistribution, `scipy.stats` nbinom/poisson with a DNP-void mixture, isotonic/Platt calibration |
+| Grader | `app/eval/grader.py` | active player with 0 stats = miss, confirmed DNP = void, no evidence = stays pending; logs CLV to `clv_log` |
+
+Workflows (all UTC cron; GitHub ignores daylight saving, so they shift an hour in summer):
+
+* `01_daily_ingest.yml`: 13:00 UTC (8:00 AM EST)
+* `02_odds_snapshot.yml`: every 30 min, 15:00-04:59 UTC, but only when ESPN shows a game starting within 6 h
+* `03_postgame_grade.yml`: 09:00 UTC (4:00 AM EST)
+
+The database is Postgres (not SQLite), so persistence is the same `pg_dump` in the `data` release that `pipeline.yml` uses (`scripts/ci_db.sh`), not a commit.
+All DB-writing workflows share the `pipeline` concurrency group so two jobs never overwrite each other's dump. The Odds API free tier (~500 credits/month)
+will not last at a 30-minute cadence; the run stops at `ODDS_API_MIN_REMAINING`, and Kalshi/Polymarket are free.
+
+Local run: `python -m app.pipeline_v2 ingest|odds|grade|gate`. DB integration test:
+`DKBOT_TEST_DB=1 DATABASE_URL=postgresql+asyncpg://.../dkbot_test pytest tests/test_upgrade_db_integration.py` (the DB name must contain "test").
+
+### Opt-in injury / inactives adjustment (off by default)
+
+`app/engine/adjust.py` redistributes NBA **minutes** (teammates gain minutes when a rotation player is out) and NFL **target / carry
+share**, then scales the matching stats. It reads `stat_projections` and writes `adjusted_stat_projections` with the original mean
+stored beside the adjusted one; the original rows are never modified. A player's own adjustment is conditional on him playing, so a
+Questionable starter keeps his number and only his teammates absorb the expected absence. Pre-game NBA live-lineup inactives override
+injury-report statuses.
+
+* Enable: set the repo **variable** `ADJUSTED_PROJECTIONS` to `1` (Settings -> Secrets and variables -> Actions -> Variables). `02_odds_snapshot.yml` then runs it after each snapshot.
+* Local: `ADJUSTED_PROJECTIONS=1 python -m app.pipeline_v2 adjust` (or `--force`).
+* Judge it: `python -m app.pipeline_v2 adjust-report` (also runs in `03_postgame_grade.yml`) compares original vs adjusted mean absolute error on graded rows.
+  Don't switch the dashboard or picks over to the adjusted numbers until that shows an improvement. The NFL settings are conservative and untuned.

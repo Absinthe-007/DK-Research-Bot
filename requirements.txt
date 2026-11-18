@@ -15,3 +15,9 @@ nflreadpy>=0.1
 polars>=1.0
 pyarrow>=15
 pytest>=8.2
+
+# --- prediction upgrades (additive) ---
+nba_api>=1.10        # stats.nba.com game logs, on/off splits, live scoreboard lineups
+scikit-learn>=1.5    # isotonic / Platt probability calibration
+requests>=2.32       # used by nba_api; kept explicit
+# scipy and nflreadpy were already listed above
