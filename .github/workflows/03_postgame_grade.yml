@@ -46,6 +46,8 @@ jobs:
         run: |
           if [ "$IN_SPORT" = "NBA" ] || [ "$IN_SPORT" = "NFL" ]; then ARGS="--sport $IN_SPORT"; else ARGS=""; fi
           python -m app.pipeline_v2 grade $ARGS
+      - name: Original vs adjusted accuracy (read-only; empty until the opt-in layer has graded rows)
+        run: python -m app.pipeline_v2 adjust-report
       - name: Save database to the data release
         if: always() && steps.restore.outcome == 'success'
         run: scripts/ci_db.sh save

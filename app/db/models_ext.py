@@ -187,3 +187,24 @@ class ClvLog(Base):
     source: Mapped[str | None] = mapped_column(String(24))
     logged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     note: Mapped[str | None] = mapped_column(Text)
+
+
+class AdjustedStatProjection(Base):
+    """Opt-in injury/inactives adjustment of a `stat_projections` row. The original row is NEVER modified:
+    `original_mean` is a copy of it taken when the adjustment was computed, so the two can be compared after grading."""
+    __tablename__ = "adjusted_stat_projections"
+    game_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    player_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    stat: Mapped[str] = mapped_column(String(24), primary_key=True)
+    sport: Mapped[str] = mapped_column(String(3), index=True)
+    original_mean: Mapped[float] = mapped_column(Float)
+    adjusted_mean: Mapped[float] = mapped_column(Float)
+    lo: Mapped[float | None] = mapped_column(Float)
+    hi: Mapped[float | None] = mapped_column(Float)
+    factor: Mapped[float] = mapped_column(Float)                 # adjusted / original
+    base_usage: Mapped[float | None] = mapped_column(Float)      # baseline minutes (NBA) or share (NFL)
+    adj_usage: Mapped[float | None] = mapped_column(Float)       # after redistribution, given he plays
+    p_active: Mapped[float | None] = mapped_column(Float)
+    status: Mapped[str | None] = mapped_column(String(24))
+    source: Mapped[str | None] = mapped_column(String(24))       # injury_report | live_lineup
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

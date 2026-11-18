@@ -107,6 +107,7 @@ async def _scenario():
         rows = (await s.execute(text("""SELECT p.full_name, pk.result, pk.actual, pk.profit_units FROM picks pk
                                         JOIN players p ON p.id = pk.player_id ORDER BY pk.id"""))).all()
         clv = (await s.execute(text("SELECT pick_id, close_price, close_fair, clv_prob, beat_close, source FROM clv_log"))).all()
+    await engine.dispose()
     return rows, clv, out_nba, out_nfl
 
 
@@ -123,3 +124,87 @@ def test_end_to_end_against_postgres():
     box_clv = [c for c in clv if c[5] == "market_lines"]
     assert len(box_clv) == 1 and box_clv[0][1] == -130 and box_clv[0][2] == pytest.approx(0.55) and box_clv[0][4] is True
     assert out_nba["clv_logged"] >= 1
+
+
+async def _adjust_scenario():
+    from sqlalchemy import text
+
+    from app.db import models as M
+    from app.db.base import engine, session_scope
+    from app.engine import adjust
+    from scripts import init_db
+
+    async with engine.begin() as conn:
+        await conn.execute(text("DROP SCHEMA public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
+    await init_db.main()
+    now = datetime.now(timezone.utc)
+    async with session_scope() as s:
+        aaa, bbb, cin = (M.Team(sport=sp, espn_id=i, abbr=a, name=a) for sp, i, a in (("NBA", "1", "AAA"), ("NBA", "2", "BBB"), ("NFL", "3", "CIN")))
+        s.add_all([aaa, bbb, cin])
+        await s.flush()
+        mk = lambda sp, eid, **kw: M.Game(sport=sp, espn_event_id=eid, season="2026", home_team_id=aaa.id, away_team_id=bbb.id, **kw)  # noqa: E731
+        nba_game = mk("NBA", "up-nba", start_time=now + timedelta(hours=5))
+        nfl_game = M.Game(sport="NFL", espn_event_id="up-nfl", season="2026", week=10, start_time=now + timedelta(hours=40),
+                          home_team_id=cin.id, away_team_id=bbb.id)
+        past = [mk("NBA", f"past{i}", start_time=now - timedelta(days=i + 1), completed=True) for i in range(10)]
+        s.add_all([nba_game, nfl_game, *past])
+        names = ["star", "p1", "p2", "p3", "p4", "p5", "p6", "p7"]
+        nba = {n: M.Player(sport="NBA", espn_id=n, full_name=n, name_key=n, team_abbr="AAA") for n in names}
+        nfl = {n: M.Player(sport="NFL", espn_id=f"f-{n}", full_name=n, name_key=n, team_abbr="CIN", position=pos)
+               for n, pos in (("wr1", "WR"), ("wr2", "WR"), ("te1", "TE"), ("rb1", "RB"))}
+        s.add_all([*nba.values(), *nfl.values()])
+        await s.flush()
+        for i, g in enumerate(past):      # the star's usual minutes (the stat board drops him while Out)
+            s.add(M.NbaPlayerGamelog(player_id=nba["star"].id, game_id=g.id, season="2026", game_date=(now - timedelta(days=i + 1)).date(),
+                                     team_abbr="AAA", opp_abbr="BBB", is_home=True, minutes=34, pts=25, reb=5, oreb=1, ast=5, fg3m=2,
+                                     stl=1, blk=0, tov=2, fga=18, fta=5))
+        base_min = {"p1": 30, "p2": 28, "p3": 24, "p4": 20, "p5": 14, "p6": 10, "p7": 8}
+        for n, m in base_min.items():
+            for stat, mean in (("minutes", m), ("pts", m * 0.5)):
+                s.add(M.StatProjection(sport="NBA", game_id=nba_game.id, player_id=nba[n].id, stat=stat, mean=mean, lo=mean * 0.6,
+                                       hi=mean * 1.4, model_mean=mean, sample=10))
+        usage = {"wr1": (40, 0, "WR"), "wr2": (30, 0, "WR"), "te1": (20, 0, "TE"), "rb1": (10, 60, "RB")}
+        for wk in range(6, 10):
+            for n, (t, c, pos) in usage.items():
+                await s.execute(text("""INSERT INTO nfl_usage_weekly (season, week, team_abbr, name_key, position, targets, carries)
+                                        VALUES (2026, :w, 'CIN', :n, :p, :t, :c)"""), {"w": wk, "n": n, "p": pos, "t": t, "c": c})
+        for n in ("wr2", "te1", "rb1"):
+            for stat in ("targets", "rec_yds", "carries"):
+                s.add(M.StatProjection(sport="NFL", game_id=nfl_game.id, player_id=nfl[n].id, stat=stat, mean=10.0, lo=5, hi=15, model_mean=10.0, sample=8))
+        for pl, st in ((nba["star"], "Out"), (nba["p2"], "Questionable"), (nfl["wr1"], "Out")):
+            s.add(M.InjuryReport(sport=pl.sport, player_id=pl.id, player_name_raw=pl.full_name, status=st, source="test"))
+        await s.execute(text("""INSERT INTO nba_live_lineup (nba_game_id, nba_person_id, name_key, status, game_status, updated_at)
+                                VALUES ('x', 1, 'p2', 'ACTIVE', 1, :u), ('x', 2, 'p6', 'INACTIVE', 1, :u)"""), {"u": now})
+    async with session_scope() as s:
+        before = (await s.execute(text("SELECT game_id, player_id, stat, mean, lo, hi FROM stat_projections ORDER BY 1, 2, 3"))).all()
+    n_nba, n_nfl = await adjust.build_adjusted("NBA"), await adjust.build_adjusted("NFL")
+    async with session_scope() as s:
+        after = (await s.execute(text("SELECT game_id, player_id, stat, mean, lo, hi FROM stat_projections ORDER BY 1, 2, 3"))).all()
+        adjusted = (await s.execute(text("""SELECT p.full_name, a.sport, a.stat, a.original_mean, a.adjusted_mean, a.factor, a.p_active, a.status,
+                                            a.source FROM adjusted_stat_projections a JOIN players p ON p.id = a.player_id"""))).all()
+        await s.execute(text("UPDATE stat_projections SET actual = 14.0 WHERE stat = 'pts' AND player_id = :p"), {"p": nba["p1"].id})
+    report = await adjust.compare_report("NBA")
+    await engine.dispose()
+    return before, after, adjusted, n_nba, n_nfl, report
+
+
+def test_adjustment_layer_against_postgres():
+    before, after, adjusted, n_nba, n_nfl, report = asyncio.run(_adjust_scenario())
+    assert before == after                                                     # original projections untouched
+    nba = {(r[0], r[2]): r for r in adjusted if r[1] == "NBA"}
+    nfl = {(r[0], r[2]): r for r in adjusted if r[1] == "NFL"}
+    assert nba[("p1", "minutes")][5] > 1.0 and nba[("p1", "pts")][3] == 15.0
+    assert nba[("p1", "pts")][4] == pytest.approx(15.0 * nba[("p1", "pts")][5], abs=1e-2)
+    assert nba[("p1", "minutes")][8] == "injury_report"
+    assert nba[("p2", "pts")][8] == "live_lineup" and nba[("p2", "pts")][5] > 1.0   # confirmed active overrides Questionable
+    assert not any(n == "p6" for n, _ in nba)                                  # live INACTIVE: out, no adjusted row
+    assert not any(n == "star" for n, _ in nba)
+    assert ("wr2", "targets") in nfl and ("te1", "rec_yds") in nfl and nfl[("wr2", "targets")][5] > 1.0
+    assert all(1.0 < r[5] <= 1.4 for r in nfl.values())                        # conservative NFL clip
+    assert all(r[0] in ("wr2", "te1") or r[2] != "targets" or r[5] > 1.0 for r in nfl.values())
+    assert not any(n == "rb1" and s == "carries" for n, s in nfl)              # nobody's carries changed
+    assert n_nba == len(nba) and n_nfl == len(nfl)
+    rep = {r["stat"]: r for r in report}
+    assert rep["pts"]["n"] == 1 and rep["pts"]["mae_original"] == pytest.approx(1.0)       # |15 - 14|
+    assert rep["pts"]["mae_adjusted"] == pytest.approx(abs(nba[("p1", "pts")][4] - 14.0))

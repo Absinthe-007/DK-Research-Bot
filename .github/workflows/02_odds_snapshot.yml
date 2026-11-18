@@ -78,6 +78,16 @@ jobs:
           for SP in $(echo "$SPORTS" | tr ',' ' '); do
             python -m app.pipeline_v2 odds --sport "$SP" --hours "${IN_HOURS:-6}" || echo "::warning::$SP snapshot failed"
           done
+      - name: Adjust projections for injuries / inactives (opt-in)
+        # Off unless the repo variable ADJUSTED_PROJECTIONS is "1" (Settings -> Secrets and variables -> Actions -> Variables).
+        # Writes adjusted_stat_projections only; the original stat_projections are never touched.
+        env:
+          ADJUSTED_PROJECTIONS: ${{ vars.ADJUSTED_PROJECTIONS }}
+          SPORTS: ${{ needs.gate.outputs.sports }}
+        run: |
+          for SP in $(echo "$SPORTS" | tr ',' ' '); do
+            python -m app.pipeline_v2 adjust --sport "$SP" || echo "::warning::$SP adjust failed"
+          done
       - name: Save database to the data release
         if: always() && steps.restore.outcome == 'success'
         run: scripts/ci_db.sh save

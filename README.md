@@ -119,3 +119,16 @@ will not last at a 30-minute cadence; the run stops at `ODDS_API_MIN_REMAINING`,
 
 Local run: `python -m app.pipeline_v2 ingest|odds|grade|gate`. DB integration test:
 `DKBOT_TEST_DB=1 DATABASE_URL=postgresql+asyncpg://.../dkbot_test pytest tests/test_upgrade_db_integration.py` (the DB name must contain "test").
+
+### Opt-in injury / inactives adjustment (off by default)
+
+`app/engine/adjust.py` redistributes NBA **minutes** (teammates gain minutes when a rotation player is out) and NFL **target / carry
+share**, then scales the matching stats. It reads `stat_projections` and writes `adjusted_stat_projections` with the original mean
+stored beside the adjusted one; the original rows are never modified. A player's own adjustment is conditional on him playing, so a
+Questionable starter keeps his number and only his teammates absorb the expected absence. Pre-game NBA live-lineup inactives override
+injury-report statuses.
+
+* Enable: set the repo **variable** `ADJUSTED_PROJECTIONS` to `1` (Settings -> Secrets and variables -> Actions -> Variables). `02_odds_snapshot.yml` then runs it after each snapshot.
+* Local: `ADJUSTED_PROJECTIONS=1 python -m app.pipeline_v2 adjust` (or `--force`).
+* Judge it: `python -m app.pipeline_v2 adjust-report` (also runs in `03_postgame_grade.yml`) compares original vs adjusted mean absolute error on graded rows.
+  Don't switch the dashboard or picks over to the adjusted numbers until that shows an improvement. The NFL settings are conservative and untuned.

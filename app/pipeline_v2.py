@@ -6,6 +6,8 @@ Entry point for the prediction-upgrade jobs (GitHub Actions workflows 01-03). Ke
     python -m app.pipeline_v2 odds   [--sport ...]       # odds + prediction-market snapshot (open vs current)
     python -m app.pipeline_v2 gate   [--sport ...] [--hours 6]   # is any game about to start? (no DB) -> $GITHUB_OUTPUT
     python -m app.pipeline_v2 grade  [--sport ...]       # box scores -> grade picks -> log CLV
+    python -m app.pipeline_v2 adjust [--sport ...]       # OPT-IN (ADJUSTED_PROJECTIONS=1): injury/inactives adjustment
+    python -m app.pipeline_v2 adjust-report [--sport ...]  # original vs adjusted accuracy on graded rows
 """
 from __future__ import annotations
 
@@ -125,6 +127,31 @@ async def sync_recent_nba_logs() -> None:
     await nba_feed.sync_gamelogs(date_from=datetime.now(timezone.utc).date() - timedelta(days=3))
 
 
+async def adjust(sports=SPORTS, force: bool = False) -> None:
+    """Flag-gated. Reads `stat_projections`, writes `adjusted_stat_projections`; the original rows are never modified."""
+    from app.engine import adjust as adj
+    from app.ingestion import injuries
+
+    if not (force or adj.adjusted_enabled()):
+        log.info("ADJUSTED_PROJECTIONS is not enabled; skipping (original projections are unaffected either way)")
+        return
+    for sp in sports:
+        await _safe(injuries.sync_injuries, sp)         # fresh statuses; ESPN marks inactives "Out" near kickoff
+        log.info("%s: %s adjusted rows", sp, await _safe(adj.build_adjusted, sp))
+
+
+async def adjust_report(sports=SPORTS) -> None:
+    from app.engine import adjust as adj
+
+    for sp in sports:
+        rows = await _safe(adj.compare_report, sp) or []
+        if not rows:
+            log.info("%s: no graded adjusted rows yet", sp)
+        for r in rows:
+            print(f"{sp} {r['stat']:<14} n={r['n']:<5} MAE original={r['mae_original']:.3f} adjusted={r['mae_adjusted']:.3f} "
+                  f"improved={r['share_improved']:.0%}")
+
+
 def write_output(key: str, value: str) -> None:
     path = os.environ.get("GITHUB_OUTPUT")
     if path:
@@ -135,10 +162,11 @@ def write_output(key: str, value: str) -> None:
 
 async def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["ingest", "odds", "gate", "grade"])
+    ap.add_argument("cmd", choices=["ingest", "odds", "gate", "grade", "adjust", "adjust-report"])
     ap.add_argument("--sport", choices=list(SPORTS))
     ap.add_argument("--hours", type=float, default=6.0, help="gate/odds: only poll when a game starts within this many hours")
     ap.add_argument("--no-gate", action="store_true")
+    ap.add_argument("--force", action="store_true", help="adjust: run even when ADJUSTED_PROJECTIONS is not set")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     sports = (a.sport,) if a.sport else SPORTS
@@ -152,6 +180,10 @@ async def main() -> None:
         await odds(sports, a.hours, gate=not a.no_gate)
     elif a.cmd == "grade":
         await grade(sports)
+    elif a.cmd == "adjust":
+        await adjust(sports, a.force)
+    elif a.cmd == "adjust-report":
+        await adjust_report(sports)
 
 
 if __name__ == "__main__":
