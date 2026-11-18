@@ -110,7 +110,7 @@ These modules add new data feeds, helpers and a second grader **without changing
 Workflows (all UTC cron; GitHub ignores daylight saving, so they shift an hour in summer):
 
 * `01_daily_ingest.yml`: 13:00 UTC (8:00 AM EST)
-* `02_odds_snapshot.yml`: every 30 min, 15:00-04:59 UTC, but only when ESPN shows a game starting within 6 h
+* `02_odds_snapshot.yml`: every 2 h (15, 17, 19, 21, 23, 01 and 03 UTC), but only when ESPN shows a game starting within 6 h
 * `03_postgame_grade.yml`: 09:00 UTC (4:00 AM EST)
 
 The database is Postgres (not SQLite), so persistence is the same `pg_dump` in the `data` release that `pipeline.yml` uses (`scripts/ci_db.sh`), not a commit.
