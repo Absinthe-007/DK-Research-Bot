@@ -75,7 +75,7 @@ async def games_soon(sport: str, hours: float, now: datetime | None = None) -> b
 
 
 async def ingest(sports=SPORTS) -> None:
-    from app.ingest import market_feed, nba_feed, nfl_feed, weather_feed
+    from app.ingest import espn_nba, market_feed, nba_feed, nfl_feed, weather_feed
     from app.ingestion import espn
 
     today = datetime.now(timezone.utc).date()
@@ -86,6 +86,9 @@ async def ingest(sports=SPORTS) -> None:
         await _safe(weather_feed.sync_kickoff_weather)
     if "NBA" in sports:
         log.info("nba feed: %s", await _safe(nba_feed.sync_all, None, today - timedelta(days=10)))
+        # free ESPN source: works from GitHub runners (stats.nba.com does not)
+        log.info("espn nba lineups: %s", await _safe(espn_nba.sync_lineups, 1, 2))
+        log.info("espn nba gamelogs: %s", await _safe(espn_nba.sync_gamelogs, 10))
     from app.ingestion.oddsapi import Budget
 
     cfg = get_settings()
@@ -95,7 +98,7 @@ async def ingest(sports=SPORTS) -> None:
 
 
 async def odds(sports=SPORTS, hours: float = 6.0, gate: bool = True) -> None:
-    from app.ingest import market_feed, nba_feed
+    from app.ingest import espn_nba, market_feed, nba_feed
     from app.ingestion.oddsapi import Budget
 
     cfg = get_settings()
@@ -106,7 +109,8 @@ async def odds(sports=SPORTS, hours: float = 6.0, gate: bool = True) -> None:
             continue
         log.info("%s: %s quotes written", sp, await _safe(market_feed.snapshot, sp, budget=budget))
         if sp == "NBA":                                 # starters / inactives firm up close to tip-off
-            await _safe(nba_feed.sync_live_lineups)
+            await _safe(espn_nba.sync_lineups, 0, 1)    # free ESPN source (works on GitHub runners)
+            await _safe(nba_feed.sync_live_lineups)     # official feed: best effort, usually blocked there
 
 
 async def grade(sports=SPORTS) -> None:
@@ -128,8 +132,10 @@ async def grade(sports=SPORTS) -> None:
 
 
 async def sync_recent_nba_logs() -> None:
-    from app.ingest import nba_feed
+    from app.ingest import espn_nba, nba_feed
 
+    await _safe(espn_nba.sync_gamelogs, 4)              # free ESPN final box scores first
+    await _safe(espn_nba.sync_lineups, 2, 0)            # final lineup state: played / DNP evidence
     await nba_feed.sync_gamelogs(date_from=datetime.now(timezone.utc).date() - timedelta(days=3))
 
 
