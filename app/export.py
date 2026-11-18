@@ -12,6 +12,7 @@ from pathlib import Path
 from sqlalchemy import text
 
 from app.db.base import session_scope
+from app.engine.record import breakdown
 from app.engine.scanner import jsonable
 from app.engine.statboard import NBA_STATS, NFL_STATS
 
@@ -107,6 +108,14 @@ SELECT pk.sport, g.start_time, p.full_name player, p.team_abbr team, pk.market_k
        pk.model_prob, pk.actual, pk.result, pk.profit_units
 FROM picks pk JOIN players p ON p.id=pk.player_id JOIN games g ON g.id=pk.game_id
 WHERE pk.result IN ('win','loss') ORDER BY g.start_time DESC, pk.id DESC LIMIT 40
+"""
+
+# Every graded win/loss play with the fields the breakdowns need (calibration, market type, CLV).
+PICKS_GRADED_SQL = """
+SELECT pk.sport, pk.game_id, pk.player_id, pk.market_key, pk.kind, pk.side, pk.price, pk.first_price, pk.close_price,
+       pk.model_prob, pk.edge, pk.result, pk.profit_units
+FROM picks pk JOIN games g ON g.id=pk.game_id
+WHERE pk.result IN ('win','loss') AND g.start_time > now() - interval '30 days'
 """
 
 # Plays currently flagged for upcoming games (the model's biggest disagreements with DraftKings).
@@ -236,6 +245,7 @@ async def export() -> Path:
                 "summary": summ,
                 "recent": [dict(r) for r in (await s.execute(text(PICKS_RECENT_SQL))).mappings().all()],
                 "leans": leans,
+                "breakdown": breakdown([dict(r) for r in (await s.execute(text(PICKS_GRADED_SQL))).mappings().all()]),
             })
         except Exception as e:
             log.warning("picks record skipped: %s", e)

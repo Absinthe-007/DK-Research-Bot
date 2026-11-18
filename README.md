@@ -16,11 +16,11 @@ NFL and NBA DraftKings prop research that runs **entirely on free GitHub Actions
 
 The model projects each player from a recency-weighted average, adjusted for opponent, pace, rest, usage shifts and weather. It then **anchors that projection to the DraftKings line**: `final = 0.35·model + 0.65·market`, with a per-slate bias correction. On a real slate, the raw model disagreed with DraftKings by about 12 probability points on average, and almost all of that was noise. Anchoring brings the gap down to about 4 points, so only player-specific disagreement survives.
 
-A play is flagged when model P(win) minus DraftKings' breakeven is at least **3.5%**, or at least 6% for alt lines.
+A play is flagged when model P(win) minus DraftKings' breakeven is at least **8%**, or at least 10% for alt lines (raised from 3.5% / 6%: small gaps sit inside the model's error).
 - Each player and market gets at most one play.
 - A play is never flagged when the model is more than 30% off the market. A gap that big usually means news the box scores can't see.
 
-Every flagged play is frozen at its last pre-game price. It's graded after the box score comes in, and the dashboard shows the hit rate, units, ROI and closing-line value.
+Every flagged play is frozen at its last pre-game price. It's graded after the box score comes in, and the dashboard shows the hit rate, units, ROI and closing-line value, plus breakdowns by model confidence, gap size and market type, and an ROI view with one play per player per game.
 
 ## Dashboard
 
@@ -68,8 +68,8 @@ pytest -q
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `EDGE_THRESHOLD` | 0.035 | Minimum edge to flag an O/U play |
-| `ALT_EDGE_THRESHOLD` | 0.06 | Minimum edge to flag a milestone (alt) line |
+| `EDGE_THRESHOLD` | 0.08 | Minimum edge to flag an O/U play |
+| `ALT_EDGE_THRESHOLD` | 0.10 | Minimum edge to flag a milestone (alt) line |
 | `MODEL_WEIGHT` | 0.35 | Weight on the model vs the market. Raise it only if the graded record and CLV show the model adds information |
 | `MAX_MODEL_MARKET_GAP` | 0.30 | Plays where the model is further than this from the market are suppressed |
 | `KELLY_FRACTION`, `MAX_STAKE_PCT`, `MAX_TOTAL_EXPOSURE_PCT`, `BANKROLL` | 0.25, 0.02, 0.10, 1000 | Stake sizing |
