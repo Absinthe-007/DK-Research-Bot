@@ -36,6 +36,9 @@ log = logging.getLogger(__name__)
 NBA_SCALED = ("minutes", "pts", "reb", "ast", "fg3m", "stl", "blk", "tov", "pra")
 NFL_TARGET_STATS = ("targets", "receptions", "rec_yds", "rec_tds")
 NFL_CARRY_STATS = ("carries", "rush_yds", "rush_tds")
+# NBA: proportional redistribution lifts starters too much (a 34-min star out gives a 30-min starter ~+7 min); in practice bench
+# players absorb more than their proportional share. 70% pass-through is a conservative, UNTUNED default.
+NBA_ELASTICITY = 0.7
 NBA_MIN_CAP = 40.0
 NFL_TARGET_CAP, NFL_CARRY_CAP = 0.45, 0.70
 # NFL defaults are deliberately conservative and UNTUNED: backups below MIN_SHARE absorb some vacated volume that this
@@ -164,7 +167,8 @@ async def _build_nba(s, now: datetime, hours: float) -> list[dict]:
                 base.update({pid: float(m) for pid, m in rec if m is not None and float(m) >= 8.0})
             if len(base) < 5:
                 continue
-            shifts = conditional_multipliers(base, {pid: st[0] for pid, st in statuses.items()}, cap=NBA_MIN_CAP)
+            shifts = conditional_multipliers(base, {pid: st[0] for pid, st in statuses.items()}, cap=NBA_MIN_CAP,
+                                             elasticity=NBA_ELASTICITY)
             team_rows = [r for r in stat_rows if r["player_id"] in base]
             out += build_rows(g["game_id"], "NBA", shifts, team_rows, NBA_SCALED, statuses, base)
     return out
