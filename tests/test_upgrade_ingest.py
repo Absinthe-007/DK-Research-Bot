@@ -102,7 +102,7 @@ def test_call_endpoint_retries_then_succeeds_and_passes_headers():
         return "ok"
 
     lim = nb.RateLimiter(1.5, clock=lambda: 0.0, sleep=lambda s: None)
-    assert nb.call_endpoint(factory, limiter=lim, sleep=lambda s: None, headers=nb.NBA_HEADERS, team_id=1) == "ok"
+    assert nb.call_endpoint(factory, limiter=lim, sleep=lambda s: None, attempts=3, headers=nb.NBA_HEADERS, team_id=1) == "ok"
     assert len(calls) == 3 and calls[0]["headers"] is nb.NBA_HEADERS and calls[0]["timeout"] == nb.REQUEST_TIMEOUT
 
     def always_fails(**kw):
@@ -224,3 +224,26 @@ def test_polymarket_event_parsing_keeps_only_game_markets():
     qs = mf.attach_fair(mf.parse_polymarket_event(ev, "NBA"))
     assert [q.selection for q in qs] == ["Suns", "Kings"] and qs[0].prob == pytest.approx(0.40)
     assert qs[0].fair + qs[1].fair == pytest.approx(1.0) and qs[0].commence_time == datetime(2026, 11, 19, 3, 0, tzinfo=timezone.utc)
+
+
+def test_nba_onoff_stops_after_consecutive_failures(monkeypatch):
+    import asyncio
+    from app.ingest import nba_feed as nb
+
+    calls = []
+
+    def boom(team_id, season, limiter=None):
+        calls.append(team_id)
+        raise RuntimeError("403 blocked")
+
+    class _S:
+        async def __aenter__(self): return None
+        async def __aexit__(self, *a): return False
+
+    async def fake_upsert(*a, **k): return 0
+
+    monkeypatch.setattr(nb, "fetch_team_onoff", boom)
+    monkeypatch.setattr(nb, "session_scope", lambda: _S())
+    monkeypatch.setattr(nb, "upsert", fake_upsert)
+    asyncio.run(nb.sync_onoff.__wrapped__("2026-27") if hasattr(nb.sync_onoff, "__wrapped__") else nb.sync_onoff("2026-27"))
+    assert len(calls) == nb.MAX_CONSECUTIVE_FAILURES  # not all 30 teams
