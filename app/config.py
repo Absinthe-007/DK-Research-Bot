@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://dkbot:dkbot@localhost:5432/dkbot"
     contact_email: str = "dk-research-bot@users.noreply.github.com"  # NWS asks for a contact in the UA
 
+    # Optional The Odds API (https://the-odds-api.com). Unset = feature off, ESPN-only as before.
+    odds_api_key: str = ""
+    odds_api_max_credits_per_run: int = 40      # hard cap per pipeline refresh
+    odds_api_min_remaining: int = 60            # stop calling once the account balance falls to this reserve
+    odds_api_min_refetch_minutes: int = 120     # don't re-pull the same game's props more often than this
+
     # Raised from 0.035: 3-5 pt gaps sit inside the model's own error, and the graded record (51% hit vs 59% expected)
     # shows the small-gap plays are not beating DraftKings' margin. The by-gap table on the dashboard shows whether
     # bigger gaps pay more; lower this again only if they do not.

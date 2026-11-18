@@ -1,6 +1,6 @@
 # DK Research Bot (GitHub edition)
 
-NFL and NBA DraftKings prop research that runs **entirely on free GitHub Actions**. It needs no paid odds API, no LLM calls and no server. The results publish to a GitHub Pages dashboard.
+NFL and NBA DraftKings prop research that runs **entirely on free GitHub Actions**. It needs no paid odds API, no LLM calls and no server. An optional [The Odds API](https://the-odds-api.com) key adds real DraftKings prices where ESPN omits them (see below). The results publish to a GitHub Pages dashboard.
 
 **Dashboard:** `https://<your-user>.github.io/<repo>/`
 
@@ -79,3 +79,14 @@ pytest -q
 * ESPN's feeds are public but undocumented, so field names can change. Parsing is defensive, and each source fails on its own without stopping the rest of the run.
 * ESPN sometimes shows NFL prop **lines without prices**. In that case the bot assumes -115 on both sides and labels the play "DK PRICE NOT PUBLISHED". Check the DraftKings app before acting on it.
 * These are probabilistic estimates, not guarantees. Bet only what you can afford to lose. If gambling stops being fun: 1-800-GAMBLER.
+
+
+## Optional: The Odds API
+
+ESPN remains the primary source. If you add a free key from the-odds-api.com, the pipeline also:
+
+* replaces ESPN's assumed -115 prop prices with real DraftKings prices (those plays then become flaggable instead of "DK PRICE NOT PUBLISHED"), and
+* fills DraftKings game lines for games where ESPN has none.
+
+Setup: repo **Settings -> Secrets and variables -> Actions -> New repository secret**, name `ODDS_API_KEY`. Remove the secret to turn it off.
+Credit use is capped (`odds_api_max_credits_per_run`, a reserve floor `odds_api_min_remaining`, and a per-game re-fetch gap) so the free tier (~500 credits/month) is not exhausted; tune them in `app/config.py`.

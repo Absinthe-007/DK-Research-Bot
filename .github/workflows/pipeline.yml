@@ -129,6 +129,7 @@ jobs:
       - name: Run pipeline
         if: needs.plan.outputs.mode != 'bootstrap'
         env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}   # optional; leave the secret unset to stay ESPN-only
           MODE: ${{ needs.plan.outputs.mode }}
           SPORTS: ${{ needs.plan.outputs.sports }}
           START: ${{ inputs.start }}
