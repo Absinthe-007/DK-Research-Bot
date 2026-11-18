@@ -88,15 +88,18 @@ def devig_shin(odds_list: list[int], tol: float = 1e-7, max_iter: int = 100) -> 
     if s <= 1.0 + tol:
         return [p / s for p in raw]
 
-    # Exact closed-form for 2-outcome props (Over/Under)
+    # Exact closed form for 2-outcome markets (Over/Under, moneyline). With d = q1 - q2, Shin's insider
+    # proportion is z = (s - 1)(d^2 - s) / (s (d^2 - 1)); plugging z into the general Shin probability
+    # formula gives the fair probabilities. (An earlier shortcut here was only right near 50/50.)
     if len(raw) == 2:
-        q1, q2 = raw[0], raw[1]
-        # In a 2-way market, Shin's formula reduces to additivevig removal on implied probs:
-        # p_i = q_i - (q_1 + q_2 - 1) / 2, or via z = (s - 1) / (1 - ...), which simplifies to:
-        diff = q1 - q2
-        p1 = 0.5 * (1.0 + diff / (2.0 - s)) if s < 1.99 else q1 / s
-        p1 = min(max(p1, 1e-6), 1.0 - 1e-6)
-        return [p1, 1.0 - p1]
+        d = raw[0] - raw[1]
+        if abs(d * d - 1.0) < 1e-12:
+            return [raw[0] / s, raw[1] / s]
+        z = (s - 1.0) * (d * d - s) / (s * (d * d - 1.0))
+        z = min(max(z, 0.0), 0.99)
+        probs = [(math.sqrt(z * z + 4.0 * (1.0 - z) * q * q / s) - z) / (2.0 * (1.0 - z)) for q in raw]
+        tot = sum(probs)
+        return [p / tot for p in probs]
 
     def shin_probs(z: float) -> list[float]:
         return [
