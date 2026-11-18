@@ -1,0 +1,134 @@
+{
+ "header": {
+  "id": "401910007",
+  "competitions": [
+   {
+    "date": "2026-11-19T00:00Z",
+    "status": {
+     "type": {
+      "id": "1",
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "description": "Scheduled",
+      "detail": "Wed, November 18th at 7:00 PM EST",
+      "shortDetail": "11/18 - 7:00 PM EST"
+     }
+    },
+    "competitors": [
+     {
+      "homeAway": "home",
+      "team": {
+       "abbreviation": "CLE"
+      }
+     },
+     {
+      "homeAway": "away",
+      "team": {
+       "abbreviation": "MEM"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "boxscore": {
+  "teams": []
+ },
+ "injuries": [
+  {
+   "team": {
+    "abbreviation": "CLE"
+   },
+   "injuries": [
+    {
+     "status": "Out",
+     "athlete": {
+      "id": "5106268",
+      "displayName": "Nae'Qwan Tomlin"
+     },
+     "details": {
+      "type": "Back"
+     }
+    },
+    {
+     "status": "Day-To-Day",
+     "athlete": {
+      "id": "4683747",
+      "displayName": "Jaylon Tyson"
+     },
+     "details": {
+      "type": "Ankle"
+     }
+    },
+    {
+     "status": "Out",
+     "athlete": {
+      "id": "4066757",
+      "displayName": "Sam Merrill"
+     },
+     "details": {
+      "type": "Elbow"
+     }
+    },
+    {
+     "status": "Day-To-Day",
+     "athlete": {
+      "id": "4576087",
+      "displayName": "Peyton Watson"
+     },
+     "details": {
+      "type": "Back"
+     }
+    }
+   ]
+  },
+  {
+   "team": {
+    "abbreviation": "MEM"
+   },
+   "injuries": [
+    {
+     "status": "Out",
+     "athlete": {
+      "id": "5105550",
+      "displayName": "GG Jackson"
+     },
+     "details": {
+      "type": "Foot"
+     }
+    },
+    {
+     "status": "Out",
+     "athlete": {
+      "id": "4432810",
+      "displayName": "Isaiah Stewart"
+     },
+     "details": {
+      "type": "Illness"
+     }
+    },
+    {
+     "status": "Out",
+     "athlete": {
+      "id": "4065733",
+      "displayName": "Ty Jerome"
+     },
+     "details": {
+      "type": "Hip"
+     }
+    },
+    {
+     "status": "Out",
+     "athlete": {
+      "id": "4431785",
+      "displayName": "Scotty Pippen Jr."
+     },
+     "details": {
+      "type": "Back"
+     }
+    }
+   ]
+  }
+ ]
+}
