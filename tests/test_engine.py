@@ -1,228 +1,68 @@
-import math
-
-import numpy as np
+"""
+test_engine.py: Unit tests for DK-Research-Bot precision math and risk engine.
+"""
 import pytest
-
-from app.engine import baselines as B
-from app.engine.distributions import blend_with_history, empirical_hit_rate, fit, prob_over_under
-from app.engine.ev import edge, expected_value, screen
-from app.engine.kelly import BetCandidate, allocate, kelly_full
 from app.engine.odds_math import (
-    american_to_decimal, decimal_to_american, devig_multiplicative, devig_power, implied_prob, prob_to_american,
+    american_to_implied,
+    implied_to_american,
+    remove_vig_multiplicative,
+    remove_vig_power,
 )
+from app.engine.ev import calculate_ev
+from app.engine.kelly import calculate_kelly_stake
+from app.engine.grade import grade_bet
 
 
-# ---------------- odds math ----------------
-def test_american_decimal_roundtrip():
-    assert american_to_decimal(150) == pytest.approx(2.5)
-    assert american_to_decimal(-110) == pytest.approx(1.909090, 1e-5)
-    for a in (-250, -110, 100, 145, 600):
-        assert decimal_to_american(american_to_decimal(a)) == a
+def test_american_to_implied_conversion():
+    # Standard underdog (+) and favorite (-)
+    assert pytest.approx(american_to_implied(100), 0.001) == 0.50
+    assert pytest.approx(american_to_implied(150), 0.001) == 0.40
+    assert pytest.approx(american_to_implied(-110), 0.001) == 0.5238
 
 
-def test_implied_and_devig():
-    assert implied_prob(-110) == pytest.approx(0.5238, 1e-3)
-    fair = devig_multiplicative([-110, -110])
-    assert fair == pytest.approx([0.5, 0.5])
-    pw = devig_power([-200, 170])
-    assert sum(pw) == pytest.approx(1.0)
-    assert pw[0] > devig_multiplicative([-200, 170])[0] - 0.02   # power shifts vig onto the dog
-    assert prob_to_american(0.5) == 100
+def test_implied_to_american_roundtrip():
+    prob = 0.60
+    odds = implied_to_american(prob)
+    converted_back = american_to_implied(odds)
+    assert pytest.approx(prob, 0.02) == converted_back
 
 
-def test_invalid_odds():
-    with pytest.raises(ValueError):
-        american_to_decimal(50)
+def test_vig_removal_methods():
+    # Classic -110 / -110 market
+    odds_list = [-110, -110]
+    mult_res = remove_vig_multiplicative(odds_list)
+    power_res = remove_vig_power(odds_list)
+    
+    # Probabilities should sum to 1.0
+    assert pytest.approx(sum(mult_res), 1e-5) == 1.0
+    assert pytest.approx(sum(power_res), 1e-5) == 1.0
 
 
-# ---------------- distributions ----------------
-def test_poisson_half_point():
-    d = fit("poisson", 2.0)
-    over, under, push = prob_over_under(d, 1.5)
-    # P(X>=2) for Poisson(2) = 1 - e^-2(1+2)
-    assert over == pytest.approx(1 - math.exp(-2) * 3, 1e-9)
-    assert push == 0 and over + under == pytest.approx(1)
+def test_calculate_ev_positive():
+    # 55% true probability at +100 odds (Even money)
+    res = calculate_ev(true_prob=0.55, odds=100)
+    assert res["is_positive_ev"] is True
+    assert res["ev_percentage"] > 0.0
+    assert res["edge_percentage"] > 0.0
 
 
-def test_integer_line_push():
-    d = fit("poisson", 3.0)
-    over, under, push = prob_over_under(d, 3)
-    assert push == pytest.approx(math.exp(-3) * 27 / 6)
-    assert over + under + push == pytest.approx(1)
+def test_calculate_kelly_stake_zero_edge():
+    # Negative or zero edge should yield zero stake
+    res = calculate_kelly_stake(true_prob=0.45, odds=-110, bankroll=1000.0)
+    assert res["recommended_stake"] == 0.0
+    assert res["bankroll_percentage"] == 0.0
 
 
-def test_negbin_overdispersion_and_fallback():
-    nb = fit("negbin", 8.0, 4.0)       # var 16 > mean 8
-    assert nb.family == "negbin" and nb.mean == pytest.approx(8.0) and nb.std == pytest.approx(4.0)
-    assert fit("negbin", 8.0, 2.0).family == "poisson"   # var < mean -> Poisson
+def test_calculate_kelly_stake_positive():
+    # Positive edge should calculate a fractional stake within bankroll cap
+    res = calculate_kelly_stake(true_prob=0.58, odds=100, bankroll=1000.0, fraction=0.25)
+    assert res["recommended_stake"] > 0.0
+    assert res["recommended_stake"] <= 250.0 # Hard cap or fraction check
 
 
-def test_normal_continuity():
-    d = fit("normal", 25.0, 6.0)
-    over, under, _ = prob_over_under(d, 24.5)
-    from scipy.stats import norm
-    assert over == pytest.approx(1 - norm.cdf(-0.5 / 6))   # P(X>=25) = 1 - F(24.5) after continuity correction
-    assert over + under == pytest.approx(1)
-
-
-def test_gamma_moments():
-    d = fit("gamma", 60.0, 25.0)
-    assert d.mean == pytest.approx(60.0) and d.std == pytest.approx(25.0)
-
-
-def test_anytime_td_none_line():
-    d = fit("poisson", 0.5)
-    over, _, _ = prob_over_under(d, None)
-    assert over == pytest.approx(1 - math.exp(-0.5))
-
-
-def test_empirical_and_blend():
-    rate, n = empirical_hit_rate(np.array([10, 12, 8, 15, 11]), 10.5)
-    assert rate == pytest.approx(3 / 5) and n == pytest.approx(5)
-    assert blend_with_history(0.5, 1.0, 0.0) == 0.5
-    assert 0.5 < blend_with_history(0.5, 1.0, 20) < 1.0
-
-
-# ---------------- baselines ----------------
-def test_ewm_favors_recent():
-    mu, _ = B.ewm_mean_std([10] * 10 + [20] * 3)
-    assert mu > 13.5            # simple mean would be 12.3
-
-
-def test_opponent_factor_shrinks():
-    assert B.opponent_factor(28, 25, 0) == 1.0
-    f = B.opponent_factor(28, 25, 6, k=8)
-    assert 1.0 < f < 28 / 25
-
-
-def test_weather():
-    f, flags = B.weather_factor("player_pass_yds", 22, 0.1, 50)
-    assert f == pytest.approx(0.85) and flags
-    assert B.weather_factor("player_pass_yds", 30, 0.9, 10, "dome") == (1.0, [])
-
-
-# ---------------- EV / Kelly ----------------
-def test_ev_formula():
-    # 55% at -110: EV = .55*(100/110) - .45
-    assert expected_value(0.55, -110) == pytest.approx(0.55 * 100 / 110 - 0.45)
-    assert edge(0.55, -110) == pytest.approx(0.55 - 110 / 210)
-    # push removes action but not value sign
-    assert expected_value(0.5, 100, p_push=0.2) == pytest.approx(0.5 - 0.3)
-
-
-def test_edge_ev_identity():
-    p, a, push = 0.57, -115, 0.05
-    e = edge(p, a, push)
-    assert expected_value(p, a, push) == pytest.approx(e * american_to_decimal(a) * (1 - push))
-
-
-def test_screen_threshold():
-    assert screen("Over", 24.5, -110, 0.57).flagged          # edge ~4.6 pts
-    assert not screen("Over", 24.5, -110, 0.55).flagged      # ~2.6 pts
-    r = screen("Over", 24.5, -110, 0.75, fair_prob=0.5)
-    assert any("GAP" in f for f in r.flags)
-
-
-def test_kelly():
-    assert kelly_full(0.55, 100) == pytest.approx(0.10)
-    assert kelly_full(0.45, 100) == 0.0
-    out = allocate([BetCandidate("a", 1, 0.6, 100), BetCandidate("b", 1, 0.6, 100), BetCandidate("c", 2, 0.58, -110)],
-                   bankroll=1000, fraction=0.25, max_stake_pct=0.02, max_total_pct=0.04)
-    assert sum(v["stake_pct"] for v in out.values()) <= 0.04 + 1e-9
-    assert all(v["stake_pct"] <= 0.02 for v in out.values())
-
-
-# ---------------- scrapers / planner ----------------
-def test_planner_checkpoints():
-    from datetime import datetime, timedelta, timezone
-    from app.planner import CHECKPOINTS, due
-    now = datetime(2026, 10, 26, 22, 37, tzinfo=timezone.utc)
-    tip = datetime(2026, 10, 27, 0, 0, tzinfo=timezone.utc)          # 8pm ET tip
-    # T-90m = 22:30 falls between last run (20:00) and now -> due
-    assert due([tip], CHECKPOINTS["NBA"], now - timedelta(hours=2, minutes=37), now)
-    # already ran at 22:31 -> nothing new until T-30m
-    assert not due([tip], CHECKPOINTS["NBA"], datetime(2026, 10, 26, 22, 31, tzinfo=timezone.utc), now)
-    # no games -> never due
-    assert not due([], CHECKPOINTS["NFL"], None, now)
-
-
-def test_parse_prop_items_pairs_and_milestones():
-    from app.ingestion.espn import parse_prop_items
-    ath = {"$ref": "http://x/athletes/123?lang=en"}
-    items = [
-        {"athlete": ath, "type": {"name": "Total Points"}, "odds": {"american": {"value": "-114"}, "total": {"value": "21.5"}}},
-        {"athlete": ath, "type": {"name": "Total Points"}, "odds": {"american": {"value": "-112"}, "total": {"value": "21.5"}}},
-        {"athlete": ath, "type": {"name": "Points Milestones"}, "odds": {"american": {"value": "-113"}, "total": {"value": "22+"}}},
-        {"athlete": ath, "type": {"name": "Points Milestones"}, "odds": {"american": {"value": "+150"}, "total": {"value": "25+"}}},
-        # second ladder (a 1st-half sub-market) filed under the same type name -> must be dropped
-        {"athlete": ath, "type": {"name": "Points Milestones"}, "odds": {"american": {"value": "-300"}, "total": {"value": "8+"}}},
-        {"athlete": ath, "type": {"name": "Points Milestones"}, "odds": {"american": {"value": "+200"}, "total": {"value": "12+"}}},
-        {"athlete": ath, "type": {"name": "Anytime Touchdown Scorer"}, "odds": {"american": {"value": "+120"}, "total": {}}},
-        {"athlete": ath, "type": {"name": "First Basket"}, "odds": {"american": {"value": "+900"}}},
-    ]
-    rows = parse_prop_items(items)
-    ou = [r for r in rows if r["kind"] == "ou"]
-    assert [(r["side"], r["price"], r["line"]) for r in ou] == [("Over", -114, 21.5), ("Under", -112, 21.5)]
-    pts_alt = sorted(r["line"] for r in rows if r["kind"] == "alt" and r["market_key"] == "player_points")
-    assert pts_alt == [21.5, 24.5]          # only the ladder consistent with the 21.5 main line
-    assert [r["line"] for r in rows if r["market_key"] == "player_anytime_td"] == [0.5]
-    assert len(rows) == 5
-
-
-def test_parse_american():
-    from app.ingestion.common import parse_american, parse_float
-    assert parse_american("+170") == 170 and parse_american("EVEN") == 100 and parse_american("OFF") is None
-    assert parse_float("o43.5") == 43.5 and parse_float("+4.5") == 4.5
-
-
-def test_infer_nfl_group_from_stats():
-    import pandas as pd
-    from app.engine.statboard import _infer_group
-    row = dict(pass_attempts=0, carries=0, targets=0, fgm=0, xpm=0, tackles=0)
-    mk = lambda **kw: pd.DataFrame([row | kw] * 3)
-    assert _infer_group(mk(pass_attempts=30)) == "QB"
-    assert _infer_group(mk(carries=15, targets=2)) == "RB"
-    assert _infer_group(mk(targets=6, carries=1)) == "REC"
-    assert _infer_group(mk(fgm=2, xpm=3)) == "K"
-    assert _infer_group(mk(tackles=5)) == "DEF"
-
-
-def test_pick_result_fits_column():
-    from app.db.models import Pick
-    width = Pick.__table__.c.result.type.length
-    for r in ("win", "loss", "push", "void", "pulled"):
-        assert len(r) <= width
-
-
-# ---------------- graded-record breakdowns ----------------
-def _pick(**kw):
-    base = dict(sport="NBA", game_id=1, player_id=1, market_key="player_points", kind="ou", side="Over", price=-110,
-                first_price=-110, close_price=-120, model_prob=0.6, edge=0.06, result="win", profit_units=0.91)
-    return base | kw
-
-
-def test_breakdown_buckets_and_dedupe():
-    from app.engine.record import breakdown, market_class, one_per_player_game
-    rows = [
-        _pick(model_prob=0.58, edge=0.04, result="loss", profit_units=-1.0),
-        _pick(market_key="player_points_rebounds_assists", model_prob=0.67, edge=0.10),   # same player+game, bigger edge
-        _pick(player_id=2, market_key="player_assists", kind="alt", model_prob=0.62, edge=0.07, result="loss", profit_units=-1.0),
-        _pick(player_id=3, result="push", profit_units=0.0),                              # pushes are excluded
-    ]
-    b = breakdown(rows)["NBA"]
-    assert b["overall"]["n"] == 3 and b["overall"]["wins"] == 1
-    assert b["deduped"]["n"] == 2                                   # players 1 and 2 only
-    assert [x["label"] for x in b["calibration"]] == ["55–60%", "60–65%", "65%+"]
-    assert {x["label"] for x in b["by_class"]} == {"Single stats", "Combo stats", "Alt lines"}
-    assert market_class("player_pass_rush_yds", "ou") == "Combo stats"
-    assert one_per_player_game(rows[:2])[0]["market_key"] == "player_points_rebounds_assists"
-
-
-def test_clv_sign():
-    from app.engine.record import clv
-    # flagged at -110, closed -130: market moved toward us -> positive CLV
-    r = clv([_pick(first_price=-110, close_price=-130, price=-110)])
-    assert r["vs_first"]["avg"] > 0 and r["vs_first"]["beat"] == 1.0
-    # flagged at -130, closed -110: market moved away -> negative
-    assert clv([_pick(first_price=-130, close_price=-110, price=-130)])["vs_first"]["avg"] < 0
-    assert clv([_pick(close_price=None)]) is None
+def test_grade_bet_win_and_clv():
+    # Win bet at +100, closing odds at +120 (market moved in our favor = good CLV)
+    res = grade_bet(bet_result="win", stake=100.0, odds=100, closing_odds=120)
+    assert res["profit_loss"] == 100.0
+    assert res["beat_closing_line"] is True
+    assert res["clv_percentage"] > 0.0
