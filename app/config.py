@@ -17,7 +17,10 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://dkbot:dkbot@localhost:5432/dkbot"
     contact_email: str = "dk-research-bot@users.noreply.github.com"   # NWS asks for a contact in the UA
 
-    edge_threshold: float = 0.035
+    # Raised from 0.035: 3-5 pt gaps sit inside the model's own error, and the graded record (51% hit vs 59% expected)
+    # shows the small-gap plays are not beating DraftKings' margin. The by-gap table on the dashboard shows whether
+    # bigger gaps pay more; lower this again only if they do not.
+    edge_threshold: float = 0.08
     # Final projection = MODEL_WEIGHT * model mean + (1 - MODEL_WEIGHT) * market-implied mean.
     # Sports-betting markets are sharp; an un-anchored box-score model disagrees with DK by
     # ~12 pts of probability on average (measured on a real slate), almost all of it noise.
@@ -26,7 +29,7 @@ class Settings(BaseSettings):
     # One-sided "milestone" alt lines (e.g. 25+ points) are only flagged inside this price band:
     # deep tails are where any model's error is largest relative to the price.
     max_model_market_gap: float = 0.30
-    alt_edge_threshold: float = 0.06
+    alt_edge_threshold: float = 0.10
     alt_min_price: int = -250
     alt_max_price: int = 250
     kelly_fraction: float = 0.25

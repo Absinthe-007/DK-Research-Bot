@@ -204,6 +204,7 @@ footer .rg{margin-top:6px}
 
   <div class="sec"><h2>Track record</h2><span class="hint">Every flagged play, graded after the game</span></div>
   <div class="cards" id="rec"></div>
+  <div id="breakdown"></div>
   <div class="tablewrap" style="margin-top:10px"><table class="t" id="recent-picks"></table></div>
 
   <div class="sec"><h2>Accuracy by stat</h2><span class="hint">Average miss · share of lines inside the projected range</span></div>
@@ -369,6 +370,38 @@ function accCards(S) {
       <div class="sub">${Math.round(r.in_range * 100)}% in range · ${lean}<br>${r.n.toLocaleString()} player-games</div><div class="bar"><i style="width:${r.in_range * 100}%"></i><u style="left:60%"></u></div></div>`; }).join("");
 }
 
+
+/* ---------- record breakdowns: calibration, market type, per-player view, closing-line value ---------- */
+function breakdownSection() {
+  const B = (((BOARD.record || {}).breakdown) || {})[SPORT], el = $("#breakdown");
+  if (!B || !B.overall || !B.overall.n) { el.innerHTML = ""; return; }
+  const roiTxt = v => v == null ? "–" : `<span class="${v >= 0 ? "pos" : "neg"}">${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}%</span>`;
+  const row = (label, r, extra = "") => `<tr><td>${esc(label)}${extra}</td><td>${r.n}</td><td>${r.wins}–${r.losses}</td><td>${pct(r.hit)}</td>
+      <td>${pct(r.avg_model)}</td><td>${pct(r.avg_breakeven)}</td><td>${roiTxt(r.roi)}</td></tr>`;
+  const head = first => `<tr><th>${first}</th><th>Plays</th><th>Record</th><th>Hit rate</th><th>Model expected</th><th>Breakeven</th><th>ROI</th></tr>`;
+  const tbl = (first, rows) => `<div class="tablewrap" style="max-height:none;margin-top:8px"><table class="t">${head(first)}${rows.join("")}</table></div>`;
+  const o = B.overall, d = B.deduped, c = B.clv;
+  const clvCard = !c || !(c.vs_first || c.vs_last) ? "" : (() => {
+    const x = c.vs_first || c.vs_last, which = c.vs_first ? "price when first flagged" : "last scanned price";
+    const a = x.avg * 100;
+    return `<div class="card"><div class="k">Closing-line value</div><div class="big num ${a >= 0 ? "pos" : "neg"}">${a >= 0 ? "+" : "−"}${Math.abs(a).toFixed(1)}<small>pts</small></div>
+      <div class="sub">Average move in breakeven chance, ${which} to the closing price. Beat the close on <b>${pct(x.beat)}</b> of ${x.n} plays.<br>Positive means the market moved toward the plays, the quickest sign of a real edge.</div></div>`;
+  })();
+  const dedupCard = `<div class="card"><div class="k">One play per player per game</div><div class="big num ${d.roi >= 0 ? "pos" : "neg"}">${d.roi >= 0 ? "+" : "−"}${Math.abs(d.roi * 100).toFixed(1)}<small>% ROI</small></div>
+      <div class="sub"><b>${d.wins}–${d.losses}</b> (${pct(d.hit)}) on ${d.n} plays, keeping only the biggest-gap play for each player.<br>All plays: ${roiTxt(o.roi)} on ${o.n}. Overlapping markets on one player are one bet, not several.</div></div>`;
+  const calib = (B.calibration || []).map(r => row(r.label, r)), edge = (B.by_edge || []).map(r => row(r.label, r));
+  const cls = (B.by_class || []).map(r => row(r.label, r));
+  const mk = (B.by_market || []).filter(r => r.n >= 5).map(r => row(MARKET[r.market_key] || r.market_key, r, r.kind === "alt" ? " <small style='color:var(--muted)'>(alt)</small>" : ""));
+  el.innerHTML = `<div class="cards" style="margin-top:10px">${dedupCard}${clvCard}</div>
+    <p class="note">Calibration: if the model is right, the hit rate in each row matches <b>Model expected</b>. A hit rate below it means the model is overconfident there, so shrink those chances toward DraftKings' price.</p>
+    ${tbl("Model chance", calib)}
+    <p class="note">Does a bigger claimed gap pay more? If ROI doesn't rise with the gap, a higher flag threshold won't help.</p>
+    ${tbl("Gap vs DraftKings", edge)}
+    <p class="note">By market type: combo stats and alt lines are tracked apart from single stats.</p>
+    ${tbl("Market type", cls)}
+    ${mk.length ? `<p class="note">By market (5+ plays).</p>${tbl("Market", mk)}` : ""}`;
+}
+
 /* ---------- picks tables ---------- */
 const pickLabel = r => `${MARKET[r.market_key] || r.market_key}`;
 function leansTable() {
@@ -453,7 +486,7 @@ function render() {
   document.querySelectorAll("tr.p").forEach(tr => tr.onclick = () => { const k = tr.dataset.k; OPEN.has(k) ? OPEN.delete(k) : OPEN.add(k); render(); });
   document.querySelectorAll("th[data-sort]").forEach(th => th.onclick = () => { SORT = SORT === th.dataset.sort ? "" : th.dataset.sort; render(); });
 
-  winnersTable(pg); leansTable(); recordTable();
+  winnersTable(pg); leansTable(); recordTable(); breakdownSection();
   const R = (S.recent || []).filter(r => matches(norm([r.player, r.team, TN[r.team], r.home, r.away].join(" ")), q) && (!TEAM || r.team === TEAM));
   $("#recent").innerHTML = `<tr><th>Date</th><th>Player</th><th>Stat</th><th>Projected</th><th>Range</th><th>Actual</th><th>Miss</th></tr>` +
     (R.map(r => { const miss = r.actual - r.mean, inr = r.actual >= r.lo && r.actual <= r.hi;

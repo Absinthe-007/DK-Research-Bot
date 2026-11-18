@@ -192,3 +192,37 @@ def test_pick_result_fits_column():
     width = Pick.__table__.c.result.type.length
     for r in ("win", "loss", "push", "void", "pulled"):
         assert len(r) <= width
+
+
+# ---------------- graded-record breakdowns ----------------
+def _pick(**kw):
+    base = dict(sport="NBA", game_id=1, player_id=1, market_key="player_points", kind="ou", side="Over", price=-110,
+                first_price=-110, close_price=-120, model_prob=0.6, edge=0.06, result="win", profit_units=0.91)
+    return base | kw
+
+
+def test_breakdown_buckets_and_dedupe():
+    from app.engine.record import breakdown, market_class, one_per_player_game
+    rows = [
+        _pick(model_prob=0.58, edge=0.04, result="loss", profit_units=-1.0),
+        _pick(market_key="player_points_rebounds_assists", model_prob=0.67, edge=0.10),   # same player+game, bigger edge
+        _pick(player_id=2, market_key="player_assists", kind="alt", model_prob=0.62, edge=0.07, result="loss", profit_units=-1.0),
+        _pick(player_id=3, result="push", profit_units=0.0),                              # pushes are excluded
+    ]
+    b = breakdown(rows)["NBA"]
+    assert b["overall"]["n"] == 3 and b["overall"]["wins"] == 1
+    assert b["deduped"]["n"] == 2                                   # players 1 and 2 only
+    assert [x["label"] for x in b["calibration"]] == ["55–60%", "60–65%", "65%+"]
+    assert {x["label"] for x in b["by_class"]} == {"Single stats", "Combo stats", "Alt lines"}
+    assert market_class("player_pass_rush_yds", "ou") == "Combo stats"
+    assert one_per_player_game(rows[:2])[0]["market_key"] == "player_points_rebounds_assists"
+
+
+def test_clv_sign():
+    from app.engine.record import clv
+    # flagged at -110, closed -130: market moved toward us -> positive CLV
+    r = clv([_pick(first_price=-110, close_price=-130, price=-110)])
+    assert r["vs_first"]["avg"] > 0 and r["vs_first"]["beat"] == 1.0
+    # flagged at -130, closed -110: market moved away -> negative
+    assert clv([_pick(first_price=-130, close_price=-110, price=-130)])["vs_first"]["avg"] < 0
+    assert clv([_pick(close_price=None)]) is None
