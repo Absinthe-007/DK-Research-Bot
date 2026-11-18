@@ -1,53 +1,50 @@
 """
-Grade picks once box scores land: actual stat vs line -> win/loss/push (DNP = void, as DK
-voids props for players who don't play), units won at the pick price, and closing price
-(last DK snapshot before kickoff) for closing-line value.
+grade.py: Bet settlement, grading, and Closing Line Value (CLV) calculation.
 """
-from __future__ import annotations
+from app.engine.odds_math import american_to_implied
 
-from sqlalchemy import text
+def grade_bet(
+    bet_result: str, 
+    stake: float, 
+    odds: int, 
+    closing_odds: int
+) -> dict:
+    """
+    Grades a settled bet and evaluates Closing Line Value (CLV).
+    
+    :param bet_result: Outcome ('win', 'loss', 'push')
+    :param stake: Amount wagered
+    :param odds: Odds at which the bet was placed
+    :param closing_odds: Final market closing odds right before game start
+    """
+    # 1. Calculate Payout / Profit
+    profit = 0.0
+    if bet_result == 'win':
+        if odds > 0:
+            profit = stake * (odds / 100.0)
+        else:
+            profit = stake * (100.0 / abs(odds))
+    elif bet_result == 'loss':
+        profit = -stake
+    elif bet_result == 'push':
+        profit = 0.0
+    else:
+        raise ValueError("Invalid bet_result. Use 'win', 'loss', or 'push'.")
 
-from app.db.base import session_scope
-from app.db.reference import MARKET_INDEX
-from app.engine.odds_math import profit_per_unit
-from app.engine.projector import NBA_COLS, NFL_COLS, stat_sql
-from app.ingestion.common import tracked
+    # 2. Calculate Closing Line Value (CLV)
+    placed_implied = american_to_implied(odds)
+    closing_implied = american_to_implied(closing_odds)
+    
+    # Positive CLV means you secured a better price than the market closed at
+    clv_edge_pct = (closing_implied - placed_implied) * 100.0
 
-
-@tracked("grade")
-async def grade(sport: str) -> int:
-    table = "nba_player_gamelogs" if sport == "NBA" else "nfl_player_games"
-    cols = NBA_COLS if sport == "NBA" else NFL_COLS
-    n = 0
-    async with session_scope() as s:
-        picks = (await s.execute(text("""
-            SELECT pk.* FROM picks pk JOIN games g ON g.id=pk.game_id
-            WHERE pk.sport=:sp AND pk.result IS NULL AND g.completed AND g.boxscore_loaded"""), {"sp": sport})).mappings().all()
-        for pk in picks:
-            if not pk["active"]:
-                # result is varchar(6): the old value 'dropped' (7 chars) crashed the whole nightly grade
-                await s.execute(text("UPDATE picks SET result='pulled' WHERE id=:i"), {"i": pk["id"]})
-                continue
-            expr = stat_sql(MARKET_INDEX[pk["market_key"]][3], cols)
-            actual = (await s.execute(text(f"SELECT {expr} FROM {table} WHERE player_id=:p AND game_id=:g"),
-                                      {"p": pk["player_id"], "g": pk["game_id"]})).scalar()
-            close = (await s.execute(text("""
-                SELECT ps.price FROM prop_snapshots ps JOIN games g ON g.id=ps.game_id
-                WHERE ps.game_id=:g AND ps.player_id=:p AND ps.market_key=:m AND ps.kind=:k AND ps.side=:sd
-                  AND ps.line=:l AND ps.captured_at < g.start_time ORDER BY ps.captured_at DESC LIMIT 1"""),
-                dict(g=pk["game_id"], p=pk["player_id"], m=pk["market_key"], k=pk["kind"], sd=pk["side"],
-                     l=pk["line"]))).scalar()
-            if actual is None:
-                result, units = "void", 0.0
-            else:
-                actual = float(actual)
-                if actual == pk["line"]:
-                    result, units = "push", 0.0
-                else:
-                    won = actual > pk["line"] if pk["side"] == "Over" else actual < pk["line"]
-                    result = "win" if won else "loss"
-                    units = profit_per_unit(pk["price"]) if won else -1.0
-            await s.execute(text("""UPDATE picks SET actual=:a, result=:r, profit_units=:u, close_price=:c WHERE id=:i"""),
-                            dict(a=actual, r=result, u=units, c=close, i=pk["id"]))
-            n += 1
-    return n
+    return {
+        "result": bet_result,
+        "stake": round(stake, 2),
+        "profit_loss": round(profit, 2),
+        "roi_percentage": round((profit / stake) * 100.0, 2) if stake > 0 else 0.0,
+        "placed_odds": odds,
+        "closing_odds": closing_odds,
+        "clv_percentage": round(clv_edge_pct, 2),
+        "beat_closing_line": closing_implied > placed_implied
+    }

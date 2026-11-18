@@ -1,66 +1,61 @@
 """
-Odds conversions and de-vigging.
-
-American odds A:
-    A > 0  -> decimal = 1 + A/100      e.g. +150 -> 2.50
-    A < 0  -> decimal = 1 + 100/|A|    e.g. -110 -> 1.909
-Implied probability (INCLUDING vig) = 1 / decimal. This is the BREAKEVEN win rate for a bet
-at that price - the number a model must beat.
-
-De-vig: a two-way market's implied probs sum to >1 (the overround). Removing it gives the
-market's "fair" probability - useful as a sanity anchor (big model-vs-fair gaps usually mean
-the model is missing information, e.g. an injury).
-  * multiplicative: p_i / sum(p)                 - simple, standard
-  * power:          find k with sum(p_i^k) = 1   - shifts more vig onto longshots, which
-                                                   matches the favourite-longshot bias better
+odds_math.py: Precision odds conversion and vig-removal algorithms.
 """
-from __future__ import annotations
 
-from collections.abc import Sequence
+def american_to_implied(odds: int) -> float:
+    """Converts American odds to raw implied probability."""
+    if odds > 0:
+        return 100.0 / (odds + 100.0)
+    else:
+        return abs(odds) / (abs(odds) + 100.0)
 
-from scipy.optimize import brentq
+def implied_to_american(prob: float) -> int:
+    """Converts a true probability back to American odds format."""
+    if prob <= 0.0 or prob >= 1.0:
+        raise ValueError("Probability must be strictly between 0 and 1.")
+    if prob >= 0.5:
+        odds = int(round(-100.0 * prob / (1.0 - prob)))
+    else:
+        odds = int(round(100.0 * (1.0 - prob) / prob))
+    return odds
 
+def remove_vig_multiplicative(odds_list: list[int]) -> list[float]:
+    """
+    Removes juice using the standard multiplicative (proportional) method.
+    Best for balanced markets where juice is distributed evenly.
+    """
+    raw_probs = [american_to_implied(o) for o in odds_list]
+    total_market_prob = sum(raw_probs)
+    
+    # Normalize probabilities to sum to 1.0
+    true_probs = [p / total_market_prob for p in raw_probs]
+    return true_probs
 
-def american_to_decimal(a: float) -> float:
-    if a == 0 or -100 < a < 100:
-        raise ValueError(f"invalid American odds: {a}")
-    return 1 + (a / 100 if a > 0 else 100 / abs(a))
+def remove_vig_power(odds_list: list[int], tol: float = 1e-6, max_iter: int = 100) -> list[float]:
+    """
+    Removes juice using Shin's / Power Method algorithm.
+    More accurate for asymmetric markets (heavy favorites vs longshots) 
+    by accounting for favorite-longshot bias.
+    """
+    raw_probs = [american_to_implied(o) for o in odds_list]
+    sum_probs = sum(raw_probs)
+    
+    # If market is already fair
+    if abs(sum_probs - 1.0) < tol:
+        return raw_probs
 
+    # Solve for power parameter 'k' such that sum(p_i ^ k) = 1.0
+    low, high = 0.0, 10.0
+    k = 1.0
+    for _ in range(max_iter):
+        k = (low + high) / 2.0
+        val = sum(p ** k for p in raw_probs)
+        if abs(val - 1.0) < tol:
+            break
+        if val > 1.0:
+            low = k
+        else:
+            high = k
 
-def decimal_to_american(d: float) -> int:
-    if d <= 1:
-        raise ValueError("decimal odds must be > 1")
-    return round((d - 1) * 100) if d >= 2 else round(-100 / (d - 1))
-
-
-def implied_prob(a: float) -> float:
-    """Breakeven probability at American price `a` (vig included)."""
-    return 1 / american_to_decimal(a)
-
-
-def profit_per_unit(a: float) -> float:
-    """Net profit on a 1-unit winning stake (the Kelly 'b')."""
-    return american_to_decimal(a) - 1
-
-
-def prob_to_american(p: float) -> int:
-    """Fair American price for probability p."""
-    return decimal_to_american(1 / p)
-
-
-def overround(prices: Sequence[float]) -> float:
-    return sum(implied_prob(a) for a in prices) - 1
-
-
-def devig_multiplicative(prices: Sequence[float]) -> list[float]:
-    raw = [implied_prob(a) for a in prices]
-    s = sum(raw)
-    return [p / s for p in raw]
-
-
-def devig_power(prices: Sequence[float]) -> list[float]:
-    raw = [implied_prob(a) for a in prices]
-    if abs(sum(raw) - 1) < 1e-9:
-        return raw
-    k = brentq(lambda k: sum(p**k for p in raw) - 1, 0.5, 5.0)
-    return [p**k for p in raw]
+    true_probs = [p ** k for p in raw_probs]
+    return true_probs

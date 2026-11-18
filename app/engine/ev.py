@@ -1,67 +1,34 @@
 """
-Expected value and edge screening.
-
-Definitions (per 1 unit staked):
-    b        = net decimal profit on a win  (= decimal_odds - 1)
-    p_w, p_l, p_push = model probabilities of win / loss / push   (sum to 1)
-    EV       = p_w * b - p_l * 1                     (push returns the stake: contributes 0)
-
-    This is exactly the requested  EV = P(win)*Profit - P(lose)*Stake.
-
-    edge     = P(win | action) - breakeven
-             = p_w / (1 - p_push)  -  implied_prob(price)
-
-`breakeven` is the VIGGED implied probability - i.e. the actual price you would pay - so a
-positive edge means positive EV, and EV/unit = edge * (b + 1) * (1 - p_push) exactly.
-The default flag threshold is edge >= 3.5 percentage points.
+ev.py: Expected Value (EV) and mathematical edge calculations.
 """
-from __future__ import annotations
+from app.engine.odds_math import american_to_implied
 
-from dataclasses import asdict, dataclass, field
+def calculate_ev(true_prob: float, odds: int) -> dict:
+    """
+    Calculates Expected Value (EV), decimal payout, and raw edge.
+    
+    :param true_prob: Model's assessed true win probability (0.0 to 1.0)
+    :param odds: Offered American odds (e.g., +150 or -110)
+    """
+    # Calculate decimal odds
+    if odds > 0:
+        decimal_odds = (odds / 100.0) + 1.0
+    else:
+        decimal_odds = (100.0 / abs(odds)) + 1.0
 
-from app.engine.odds_math import implied_prob, profit_per_unit
+    # EV formula: (Probability of Winning * Net Profit) - (Probability of Losing * Stake)
+    net_profit_multiplier = decimal_odds - 1.0
+    ev_percentage = (true_prob * net_profit_multiplier) - ((1.0 - true_prob) * 1.0)
+    
+    # Market implied probability for edge comparison
+    market_implied = american_to_implied(odds)
+    edge = true_prob - market_implied
 
-
-@dataclass
-class EdgeResult:
-    side: str
-    line: float | None
-    price: int
-    model_prob: float          # P(win) unconditional
-    push_prob: float
-    breakeven_prob: float
-    fair_prob: float | None    # de-vigged market prob for this side
-    edge: float
-    ev_per_unit: float
-    flagged: bool
-    flags: list[str] = field(default_factory=list)
-
-    def as_dict(self) -> dict:
-        return asdict(self)
-
-
-def expected_value(p_win: float, price: int, p_push: float = 0.0) -> float:
-    b = profit_per_unit(price)
-    p_loss = max(0.0, 1 - p_win - p_push)
-    return p_win * b - p_loss
-
-
-def edge(p_win: float, price: int, p_push: float = 0.0) -> float:
-    action = 1 - p_push
-    if action <= 0:
-        return 0.0
-    return p_win / action - implied_prob(price)
-
-
-def screen(side: str, line: float | None, price: int, p_win: float, p_push: float = 0.0,
-           fair_prob: float | None = None, threshold: float = 0.035,
-           context_flags: list[str] | None = None, max_model_market_gap: float = 0.15) -> EdgeResult:
-    e = edge(p_win, price, p_push)
-    flags = list(context_flags or [])
-    flagged = e >= threshold
-    # Sanity guard: a model that disagrees with a liquid market by >15 pts is far more often
-    # missing information (injury, role change) than finding free money.
-    if fair_prob is not None and (p_win / max(1e-9, 1 - p_push)) - fair_prob > max_model_market_gap:
-        flags.append("MODEL/MARKET GAP >15pts - verify news before acting")
-    return EdgeResult(side, line, price, p_win, p_push, implied_prob(price), fair_prob, e,
-                      expected_value(p_win, price, p_push), flagged, flags)
+    return {
+        "true_prob": round(true_prob, 4),
+        "market_implied_prob": round(market_implied, 4),
+        "decimal_odds": round(decimal_odds, 4),
+        "ev_percentage": round(ev_percentage * 100.0, 2), # Expressed as a percentage
+        "edge_percentage": round(edge * 100.0, 2),
+        "is_positive_ev": ev_percentage > 0.0
+    }

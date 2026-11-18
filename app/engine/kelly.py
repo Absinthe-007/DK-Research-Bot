@@ -1,54 +1,52 @@
 """
-Fractional Kelly staking.
-
-Full Kelly for a binary bet:   f* = (b*p - q) / b       (p = win prob given action, q = 1-p)
-It maximizes long-run log growth IF p is known exactly. Our p is an estimate, and over-betting
-an over-estimated edge is far more damaging than under-betting (growth falls off a cliff past
-2x Kelly). Hence:
-  * fractional Kelly (default 1/4) - roughly halves volatility vs 1/2-Kelly for modest growth cost
-  * per-bet cap (default 2% of bankroll)
-  * total-exposure cap across a slate (default 10%) with proportional scale-down
-  * correlation haircut: multiple bets on the SAME game share outcome drivers (pace, script,
-    weather), so their stakes are divided by sqrt(#bets in that game).
+kelly.py: Bankroll allocation and optimal sizing using fractional Kelly criterion.
 """
-from __future__ import annotations
 
-import math
-from collections import Counter
-from dataclasses import dataclass
+def calculate_kelly_stake(
+    true_prob: float, 
+    odds: int, 
+    bankroll: float, 
+    fraction: float = 0.25, 
+    max_bankroll_pct: float = 0.05
+) -> dict:
+    """
+    Calculates the recommended wager size using a fractional Kelly criterion.
+    
+    :param true_prob: Model's assessed true probability of winning (0.0 to 1.0)
+    :param odds: Offered American odds
+    :param bankroll: Current total bankroll units/dollars
+    :param fraction: Kelly multiplier (default 0.25 for Quarter-Kelly to mitigate variance)
+    :param max_bankroll_pct: Hard cap on single-bet exposure (default 5%)
+    """
+    # Calculate decimal odds net payout multiplier (b)
+    if odds > 0:
+        b = odds / 100.0
+    else:
+        b = 100.0 / abs(odds)
 
-from app.engine.odds_math import profit_per_unit
+    q = 1.0 - true_prob
+    
+    # Kelly Formula: f* = (bp - q) / b
+    kelly_fraction = ((b * true_prob) - q) / b
 
+    if kelly_fraction <= 0:
+        return {
+            "recommended_stake": 0.0,
+            "bankroll_percentage": 0.0,
+            "raw_kelly_pct": round(kelly_fraction * 100, 2),
+            "reason": "Negative or zero edge; no bet recommended."
+        }
 
-def kelly_full(p_win: float, price: int, p_push: float = 0.0) -> float:
-    action = 1 - p_push
-    if action <= 0:
-        return 0.0
-    p = p_win / action
-    b = profit_per_unit(price)
-    return max(0.0, (b * p - (1 - p)) / b)
+    # Apply fractional multiplier for safety
+    adjusted_kelly = kelly_fraction * fraction
 
+    # Apply hard risk cap
+    final_pct = min(adjusted_kelly, max_bankroll_pct)
+    recommended_stake = round(bankroll * final_pct, 2)
 
-@dataclass
-class BetCandidate:
-    key: str            # unique id (e.g. edge id)
-    game_id: int
-    p_win: float
-    price: int
-    p_push: float = 0.0
-
-
-def allocate(bets: list[BetCandidate], bankroll: float, fraction: float = 0.25,
-             max_stake_pct: float = 0.02, max_total_pct: float = 0.10) -> dict[str, dict]:
-    per_game = Counter(b.game_id for b in bets)
-    out: dict[str, dict] = {}
-    for b in bets:
-        fk = kelly_full(b.p_win, b.price, b.p_push)
-        pct = min(fk * fraction / math.sqrt(per_game[b.game_id]), max_stake_pct)
-        out[b.key] = {"kelly_full": fk, "stake_pct": pct}
-    total = sum(v["stake_pct"] for v in out.values())
-    scale = min(1.0, max_total_pct / total) if total > 0 else 1.0
-    for v in out.values():
-        v["stake_pct"] *= scale
-        v["stake"] = round(v["stake_pct"] * bankroll, 2)
-    return out
+    return {
+        "recommended_stake": recommended_stake,
+        "bankroll_percentage": round(final_pct * 100.0, 2),
+        "raw_kelly_pct": round(kelly_fraction * 100.0, 2),
+        "fraction_used": fraction
+    }
