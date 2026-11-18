@@ -332,12 +332,21 @@ async def sync_props(sport: str, hours_ahead: int = 30) -> int:
                 SELECT DISTINCT ON (player_id, market_key, kind, side, line) player_id, market_key, kind, side, line, price
                 FROM prop_snapshots WHERE game_id=:g ORDER BY player_id, market_key, kind, side, line, captured_at DESC"""),
                 {"g": g.id})).all()}
+            # Lines whose newest snapshot carries a REAL price (e.g. filled in from The Odds API):
+            # ESPN's assumed -115 must not overwrite those.
+            real_priced = {(r.player_id, r.market_key, r.kind, r.side, r.line) for r in (await s.execute(text("""
+                SELECT DISTINCT ON (player_id, market_key, kind, side, line) player_id, market_key, kind, side, line, price_estimated
+                FROM prop_snapshots WHERE game_id=:g
+                ORDER BY player_id, market_key, kind, side, line, captured_at DESC"""), {"g": g.id})).all()
+                           if not r.price_estimated}
             new = []
             for r in rows:
                 pid = await _ensure_athlete(s, sport, r["espn_athlete"], cache, r["athlete_ref"])
                 if pid is None:
                     continue
                 key = (pid, r["market_key"], r["kind"], r["side"], r["line"])
+                if r["price_estimated"] and key in real_priced:
+                    continue
                 if latest.get(key) == r["price"]:
                     continue        # unchanged -> no new snapshot (keeps the DB small)
                 latest[key] = r["price"]

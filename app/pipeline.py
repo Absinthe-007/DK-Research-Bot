@@ -18,12 +18,13 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import text
 
 from app import planner
+from app.config import get_settings
 from app.db.base import session_scope
 from app.engine import statboard
 from app.engine.grade import grade
 from app.engine.scanner import scan
 from app.export import export
-from app.ingestion import espn, injuries, rest, weather
+from app.ingestion import espn, injuries, oddsapi, rest, weather
 
 log = logging.getLogger("pipeline")
 
@@ -59,6 +60,10 @@ async def refresh(sport: str) -> None:
     if sport == "NFL":
         await _safe(weather.sync_weather)
     await _safe(espn.sync_props, sport, hours_ahead=30 if sport == "NBA" else 80)
+    if oddsapi.enabled():      # optional: real DK prices where ESPN only shows a line, + game-line fallback
+        budget = oddsapi.Budget(get_settings().odds_api_max_credits_per_run, get_settings().odds_api_min_remaining)
+        await _safe(oddsapi.sync_game_lines, sport, budget=budget)
+        await _safe(oddsapi.sync_props, sport, hours_ahead=30 if sport == "NBA" else 80, budget=budget)
     await _safe(scan, sport)          # market anchors (prices are used internally only)
     await _safe(statboard.build, sport)  # expected box-score line for every player
 
