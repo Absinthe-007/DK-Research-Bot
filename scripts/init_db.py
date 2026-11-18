@@ -15,6 +15,7 @@ from app.db.reference import MARKETS
 # additive column migrations (create_all never alters existing tables)
 MIGRATIONS = [
     "ALTER TABLE prop_snapshots ADD COLUMN IF NOT EXISTS price_estimated boolean DEFAULT false NOT NULL",
+    "ALTER TABLE picks ADD COLUMN IF NOT EXISTS graded_at timestamptz",
 ] + [f"ALTER TABLE nfl_player_games ADD COLUMN IF NOT EXISTS {c} double precision DEFAULT 0 NOT NULL"
      for c in ("tackles", "sacks", "tfl", "qb_hits", "passes_defended", "def_int", "fgm", "fga", "xpm")]
 # backfill: ESPN box scores never carried position, which zeroed the NFL defense-vs-position
