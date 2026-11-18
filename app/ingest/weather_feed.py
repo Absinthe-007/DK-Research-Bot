@@ -9,6 +9,7 @@ NWS-first) is untouched and keeps feeding the existing projector.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -75,6 +76,10 @@ def _pct(v: float | None) -> float | None:
     return None if v is None else v / 100.0
 
 
+CALL_TIMEOUT = 45.0       # hard cap per forecast: the shared client honours Retry-After, and Open-Meteo has sent hours
+MAX_CONSECUTIVE_FAILURES = 2
+
+
 async def fetch_kickoff_weather(lat: float, lon: float, kickoff: datetime) -> dict | None:
     """One Open-Meteo call (cached 15 min by the shared HTTP client) -> kickoff-hour values."""
     body, _ = await http().get(OPEN_METEO, cache_ttl=900, params=dict(
@@ -95,14 +100,20 @@ async def sync_kickoff_weather(days_ahead: int = 8) -> int:
               AND g.start_time > :now AND g.start_time < :end"""),
             {"now": now, "end": now + timedelta(days=days_ahead)})).all()
     rows = []
+    misses = 0
     for gid, start, home in games:
         st = outdoor_stadium(home, stadiums)
         if st is None:
             continue                                   # dome / retractable / unknown: skip
         try:
-            wx = await fetch_kickoff_weather(st["lat"], st["lon"], start)
+            wx = await asyncio.wait_for(fetch_kickoff_weather(st["lat"], st["lon"], start), CALL_TIMEOUT)
+            misses = 0
         except Exception as e:  # one bad forecast must not sink the rest
-            log.warning("open-meteo failed for game %s (%s): %s", gid, home, e)
+            misses += 1
+            log.warning("open-meteo failed for game %s (%s): %r", gid, home, e)
+            if misses >= MAX_CONSECUTIVE_FAILURES:
+                log.warning("open-meteo: %d failures in a row (rate-limited?); skipping the rest", misses)
+                break
             continue
         if wx:
             rows.append(dict(game_id=gid, home_abbr=home, stadium=st["stadium"], kickoff=start,
