@@ -154,6 +154,12 @@ tr.det td{background:var(--panel2);text-align:left;white-space:normal;padding:12
 .pill.u{background:color-mix(in srgb,var(--down) 18%,transparent);color:var(--down)}
 .note{font-size:12.5px;color:var(--muted);margin:6px 2px 10px;max-width:90ch}
 .note b{color:var(--text)}
+.guide{margin:4px 0 6px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);padding:10px 14px}
+.guide summary{cursor:pointer;font:800 13px var(--head);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.guide dl{margin:10px 0 2px;display:grid;grid-template-columns:minmax(120px,190px) 1fr;gap:8px 16px;font-size:13px;color:var(--muted)}
+.guide dt{font-weight:700;color:var(--text)}
+.guide dd{margin:0}
+@media (max-width:640px){.guide dl{grid-template-columns:1fr;gap:2px}.guide dd{margin-bottom:8px}}
 footer{margin:34px 0 8px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:14px}
 footer .rg{margin-top:6px}
 @media (max-width:640px){.brand h1{font-size:21px}.card .big{font-size:36px}.ghead .vs{font-size:18px}}
@@ -172,10 +178,21 @@ footer .rg{margin-top:6px}
     </div>
   </header>
 
+  <details class="guide"><summary>New to this? How to read the page</summary>
+    <dl>
+      <dt>Projection</dt><dd>The model's best guess for a player's stat in tonight's game, for example 25 points.</dd>
+      <dt>DraftKings line</dt><dd>The number the sportsbook sets for that stat. A bet is on whether the player goes <b>Over</b> or stays <b>Under</b> it. ▲ means the model's guess is above the line, ▼ below.</dd>
+      <dt>Odds (−110, +150)</dt><dd>The price of a bet. −110 means you risk $110 to win $100. +150 means you risk $100 to win $150. Hover over any odds to see this. The sportsbook builds in a fee, so a pick usually has to win 52–55% of the time just to break even.</dd>
+      <dt>Model's chance and edge</dt><dd>How likely the model thinks a pick is to win, and how much higher that is than the odds imply. Bigger edge means the model disagrees with DraftKings more.</dd>
+      <dt>Result per $100 bet</dt><dd>If you had bet the same amount on every pick, how much you would have won or lost for each $100 bet. A minus sign means a loss.</dd>
+      <dt>Combo stats and alt lines</dt><dd>Pts+Reb+Ast adds three stats together. An alt line is an "at least X" bet instead of a simple over/under.</dd>
+      <dt>Not betting advice</dt><dd>This is a research tool. The picks have not beaten the sportsbook's fee so far.</dd>
+    </dl></details>
+
   <div class="sec" style="margin-top:6px"><h2>Today's slate</h2><span class="hint" id="slatehint"></span></div>
   <div class="board" id="slate"></div>
 
-  <div class="sec"><h2>Scorecard</h2><span class="hint">Last 30 days, graded against final box scores</span></div>
+  <div class="sec"><h2>Scorecard</h2><span class="hint">Last 30 days, checked against final box scores</span></div>
   <div class="cards" id="hero"></div>
 
   <div class="filters">
@@ -187,8 +204,8 @@ footer .rg{margin-top:6px}
     <div class="frow">
       <span class="lbl">Position</span><div class="chips" id="posrow"></div>
       <span class="lbl" style="margin-left:6px">Under each number</span>
-      <div class="seg sm" id="mode"><button data-m="line" class="on">DK line</button><button data-m="range">Range</button></div>
-      <label class="toggle"><input type="checkbox" id="onlyline"> Only players with a DK line</label>
+      <div class="seg sm" id="mode"><button data-m="line" class="on">DraftKings line</button><button data-m="range">Range</button></div>
+      <label class="toggle"><input type="checkbox" id="onlyline"> Only players with a DraftKings line</label>
     </div>
     <div class="meta"><span id="qmeta"></span><button class="linkbtn" id="clear" hidden>Clear filters</button></div>
   </div>
@@ -198,11 +215,11 @@ footer .rg{margin-top:6px}
   <div class="sec"><h2>Projected winners</h2><span class="hint" id="winhint"></span></div>
   <div class="tablewrap" style="max-height:none"><table class="t" id="winners"></table></div>
 
-  <div class="sec"><h2>Model vs DraftKings</h2><span class="hint">Biggest gaps right now</span></div>
+  <div class="sec"><h2>Where the model disagrees with DraftKings</h2><span class="hint">Today's biggest differences</span></div>
   <p class="note" id="leansnote"></p>
   <div class="tablewrap"><table class="t" id="leans"></table></div>
 
-  <div class="sec"><h2>Track record</h2><span class="hint">Every flagged play, graded after the game</span></div>
+  <div class="sec"><h2>Track record</h2><span class="hint">Every pick the model made, checked against what actually happened</span></div>
   <div class="cards" id="rec"></div>
   <div id="breakdown"></div>
   <div class="tablewrap" style="margin-top:10px"><table class="t" id="recent-picks"></table></div>
@@ -225,12 +242,15 @@ const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch (
 const fmtR = v => v == null ? "–" : Number.isInteger(+v) ? String(+v) : (Math.abs(v) >= 20 ? Math.round(v) : (+v).toFixed(1));
 const fmt = (v, st) => v == null ? "–" : st === "td_prob" ? Math.round(v * 100) + "%" : (Math.abs(v) >= 20 ? Math.round(v) : (+v).toFixed(1));
 const price = p => p == null ? "–" : (p > 0 ? "+" : "") + p;
+const priceTip = p => p == null ? "–" : `<span title="${p < 0 ? `Bet $${-p} to win $100` : `Bet $100 to win $${p}`}">${price(p)}</span>`;
+const SIDE_TIP = s => s === "Over" ? "Bet that the player goes above this number" : "Bet that the player stays below this number";
+const per100 = v => v == null ? "–" : `${v >= 0 ? "+$" : "−$"}${Math.abs(v * 100).toFixed(2)}`;
 const pct = v => v == null ? "–" : Math.round(v * 100) + "%";
 const signed = v => v == null ? "–" : (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toString().replace(/^0\./, "0.");
 let BOARD = null, SPORT = "NBA", GAME = "", TEAM = "", POS = "", OPEN = new Set(), SORT = "", MODE = store.get("dk-mode", "line"), ONLY = false;
 
 const MARKET = {player_points:"Points",player_rebounds:"Rebounds",player_assists:"Assists",player_threes:"3PT made",player_blocks:"Blocks",player_steals:"Steals",
-  player_steals_blocks:"Stl+Blk",player_points_rebounds_assists:"PRA",player_points_rebounds:"Pts+Reb",player_points_assists:"Pts+Ast",player_rebounds_assists:"Reb+Ast",
+  player_steals_blocks:"Stl+Blk",player_points_rebounds_assists:"Pts+Reb+Ast",player_points_rebounds:"Pts+Reb",player_points_assists:"Pts+Ast",player_rebounds_assists:"Reb+Ast",
   player_pass_yds:"Pass yds",player_pass_tds:"Pass TDs",player_pass_completions:"Completions",player_pass_attempts:"Pass att",player_pass_interceptions:"INTs",
   player_rush_yds:"Rush yds",player_rush_attempts:"Rush att",player_receptions:"Receptions",player_reception_yds:"Rec yds",player_rush_reception_yds:"Rush+Rec yds",
   player_pass_rush_yds:"Pass+Rush yds",player_anytime_td:"Anytime TD"};
@@ -346,14 +366,14 @@ function heroCards(S) {
   const R = accSummary(S), rec = ((BOARD.record || {}).summary || []).find(r => r.sport === SPORT);
   const c1 = R.all == null ? `<div class="card"><div class="k">Projection accuracy</div><div class="sub" style="margin-top:8px">No finished games graded yet.</div></div>` :
     `<div class="card"><div class="k">Stat lines in range</div><div class="big num">${Math.round(R.all * 100)}<small>%</small></div>
-      <div class="sub">Average across all ${R.ks.length} projected stats. A perfectly calibrated model lands <b>60%</b> in range, so this is on the cautious side.</div>
+      <div class="sub">Average across all ${R.ks.length} projected stats. How often the real stat landed inside the predicted range. A well-tuned model lands about <b>60%</b>; higher means the ranges are on the wide side.</div>
       <div class="bar"><i style="width:${R.all * 100}%"></i><u style="left:60%" title="60% = what a perfect model scores"></u></div></div>`;
   const c2 = R.core == null ? "" : `<div class="card"><div class="k">Headline stats in range</div><div class="big num">${Math.round(R.core * 100)}<small>%</small></div>
       <div class="sub">${R.miss.join(" · ")}<br>average miss per player-game</div>
       <div class="bar"><i style="width:${R.core * 100}%"></i><u style="left:60%"></u></div></div>`;
   const hit = rec && rec.n ? rec.wins / rec.n : null, roi = rec && rec.n ? rec.units / rec.n : null;
-  const c3 = !rec || !rec.n ? "" : `<div class="card"><div class="k">Flagged plays, graded</div><div class="big num ${roi >= 0 ? "pos" : "neg"}">${roi >= 0 ? "+" : "−"}${Math.abs(roi * 100).toFixed(1)}<small>% ROI</small></div>
-      <div class="sub"><b>${rec.wins}–${rec.losses}</b> (${pct(hit)} hit rate) · <b class="${rec.units >= 0 ? "pos" : "neg"}">${rec.units >= 0 ? "+" : "−"}${Math.abs(rec.units).toFixed(1)} units</b><br>The model expected ${pct(rec.avg_model_prob)}. DraftKings' margin is hard to beat.</div></div>`;
+  const c3 = !rec || !rec.n ? "" : `<div class="card"><div class="k">Model's picks, checked</div><div class="big num ${roi >= 0 ? "pos" : "neg"}">${per100(roi)}<small>per $100 bet</small></div>
+      <div class="sub"><b>${rec.wins}–${rec.losses}</b> (won ${pct(hit)} of picks) · <b class="${rec.units >= 0 ? "pos" : "neg"}" title="1 unit = one standard bet">${rec.units >= 0 ? "+" : "−"}${Math.abs(rec.units).toFixed(1)} units</b><br>The model predicted it would win ${pct(rec.avg_model_prob)}. The sportsbook's built-in fee means a pick needs roughly 52–55% to break even.</div></div>`;
   const W = S.winners, c4 = !W || !W.n ? "" : `<div class="card"><div class="k">Winner picks</div><div class="big num">${Math.round(W.correct / W.n * 100)}<small>% right</small></div>
       <div class="sub"><b>${W.correct}–${W.n - W.correct}</b> straight up on ${W.n} finished games. The picks were ${pct(W.avg_prob)} confident on average, so they are well calibrated.</div>
       <div class="bar"><i style="width:${W.correct / W.n * 100}%"></i><u style="left:${(W.avg_prob || 0) * 100}%" title="Average confidence"></u></div></div>`;
@@ -375,50 +395,50 @@ function accCards(S) {
 function breakdownSection() {
   const B = (((BOARD.record || {}).breakdown) || {})[SPORT], el = $("#breakdown");
   if (!B || !B.overall || !B.overall.n) { el.innerHTML = ""; return; }
-  const roiTxt = v => v == null ? "–" : `<span class="${v >= 0 ? "pos" : "neg"}">${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}%</span>`;
+  const roiTxt = v => v == null ? "–" : `<span class="${v >= 0 ? "pos" : "neg"}">${per100(v)}</span>`;
   const row = (label, r, extra = "") => `<tr><td>${esc(label)}${extra}</td><td>${r.n}</td><td>${r.wins}–${r.losses}</td><td>${pct(r.hit)}</td>
       <td>${pct(r.avg_model)}</td><td>${pct(r.avg_breakeven)}</td><td>${roiTxt(r.roi)}</td></tr>`;
-  const head = first => `<tr><th>${first}</th><th>Plays</th><th>Record</th><th>Hit rate</th><th>Model expected</th><th>Breakeven</th><th>ROI</th></tr>`;
+  const head = first => `<tr><th>${first}</th><th>Picks</th><th>Record</th><th title="Share of picks that won">Won</th><th title="How often the model said these picks would win">Model predicted</th><th title="Win rate needed to break even after the sportsbook's fee">Needed to profit</th><th title="Profit or loss for each $100 bet">Result per $100 bet</th></tr>`;
   const tbl = (first, rows) => `<div class="tablewrap" style="max-height:none;margin-top:8px"><table class="t">${head(first)}${rows.join("")}</table></div>`;
   const o = B.overall, d = B.deduped, c = B.clv;
   const clvCard = !c || !(c.vs_first || c.vs_last) ? "" : (() => {
-    const x = c.vs_first || c.vs_last, which = c.vs_first ? "price when first flagged" : "last scanned price";
+    const x = c.vs_first || c.vs_last, which = c.vs_first ? "when the pick was first made" : "at the last check before the game";
     const a = x.avg * 100;
-    return `<div class="card"><div class="k">Closing-line value</div><div class="big num ${a >= 0 ? "pos" : "neg"}">${a >= 0 ? "+" : "−"}${Math.abs(a).toFixed(1)}<small>pts</small></div>
-      <div class="sub">Average move in breakeven chance, ${which} to the closing price. Beat the close on <b>${pct(x.beat)}</b> of ${x.n} plays.<br>Positive means the market moved toward the plays, the quickest sign of a real edge.</div></div>`;
+    return `<div class="card"><div class="k">Did the odds move our way?</div><div class="big num ${a >= 0 ? "pos" : "neg"}">${a >= 0 ? "+" : "−"}${Math.abs(a).toFixed(1)}<small>pts</small></div>
+      <div class="sub">Change in the odds from ${which} to just before tip-off, measured in percentage points. The odds moved in the pick's favor on <b>${pct(x.beat)}</b> of ${x.n} picks.<br>Plus means DraftKings later agreed with the picks, which is a good early sign. Minus means it moved the other way.</div></div>`;
   })();
-  const dedupCard = `<div class="card"><div class="k">One play per player per game</div><div class="big num ${d.roi >= 0 ? "pos" : "neg"}">${d.roi >= 0 ? "+" : "−"}${Math.abs(d.roi * 100).toFixed(1)}<small>% ROI</small></div>
-      <div class="sub"><b>${d.wins}–${d.losses}</b> (${pct(d.hit)}) on ${d.n} plays, keeping only the biggest-gap play for each player.<br>All plays: ${roiTxt(o.roi)} on ${o.n}. Overlapping markets on one player are one bet, not several.</div></div>`;
+  const dedupCard = `<div class="card"><div class="k">One pick per player per game</div><div class="big num ${d.roi >= 0 ? "pos" : "neg"}">${per100(d.roi)}<small>per $100 bet</small></div>
+      <div class="sub"><b>${d.wins}–${d.losses}</b> (won ${pct(d.hit)}) on ${d.n} picks, counting only the biggest edge for each player.<br>All picks: ${roiTxt(o.roi)} per $100 on ${o.n}. Several bets on the same player tend to win or lose together, so this is a fairer count.</div></div>`;
   const calib = (B.calibration || []).map(r => row(r.label, r)), edge = (B.by_edge || []).map(r => row(r.label, r));
   const cls = (B.by_class || []).map(r => row(r.label, r));
-  const mk = (B.by_market || []).filter(r => r.n >= 5).map(r => row(MARKET[r.market_key] || r.market_key, r, r.kind === "alt" ? " <small style='color:var(--muted)'>(alt)</small>" : ""));
+  const mk = (B.by_market || []).filter(r => r.n >= 5).map(r => row(MARKET[r.market_key] || r.market_key, r, r.kind === "alt" ? " <small style='color:var(--muted)'>(alt line)</small>" : ""));
   el.innerHTML = `<div class="cards" style="margin-top:10px">${dedupCard}${clvCard}</div>
-    <p class="note">Calibration: if the model is right, the hit rate in each row matches <b>Model expected</b>. A hit rate below it means the model is overconfident there, so shrink those chances toward DraftKings' price.</p>
-    ${tbl("Model chance", calib)}
-    <p class="note">Does a bigger claimed gap pay more? If ROI doesn't rise with the gap, a higher flag threshold won't help.</p>
-    ${tbl("Gap vs DraftKings", edge)}
-    <p class="note">By market type: combo stats and alt lines are tracked apart from single stats.</p>
-    ${tbl("Market type", cls)}
-    ${mk.length ? `<p class="note">By market (5+ plays).</p>${tbl("Market", mk)}` : ""}`;
+    <p class="note"><b>Is the model's confidence honest?</b> When it says 65%, it should win about 65% of the time. If <b>Won</b> is well below <b>Model predicted</b>, the model is overconfident in that row.</p>
+    ${tbl("How confident the model was", calib)}
+    <p class="note"><b>Do bigger disagreements pay more?</b> If results don't improve as the gap with DraftKings grows, only taking the biggest gaps won't help.</p>
+    ${tbl("Size of disagreement", edge)}
+    <p class="note"><b>By type of bet.</b> Single stats are one number (points). Combo stats add several together (points + rebounds). Alt lines are "at least X" bets.</p>
+    ${tbl("Type of bet", cls)}
+    ${mk.length ? `<p class="note"><b>By stat</b> (5 or more picks).</p>${tbl("Stat", mk)}` : ""}`;
 }
 
 /* ---------- picks tables ---------- */
 const pickLabel = r => `${MARKET[r.market_key] || r.market_key}`;
 function leansTable() {
   const rows = ((BOARD.record || {}).leans || []).filter(r => r.sport === SPORT);
-  $("#leansnote").innerHTML = `Where the model disagrees most with DraftKings, ranked by gap. These are <b>research leads, not recommendations</b>: the graded record below shows these plays have not beaten the sportsbook's margin so far.`;
-  $("#leans").innerHTML = `<tr><th>Player</th><th>Market</th><th>Lean</th><th>Price</th><th>Model chance</th><th>Gap</th><th>Projection</th></tr>` +
+  $("#leansnote").innerHTML = `The picks where the model disagrees most with DraftKings, biggest first. Treat them as <b>ideas to look into, not advice</b>: so far, these picks have not beaten the sportsbook's built-in fee (see the track record below).`;
+  $("#leans").innerHTML = `<tr><th>Player</th><th>Stat</th><th title="Over or Under the DraftKings number">Pick</th><th title="The price of the bet. Hover over a number to see it in dollars.">Odds</th><th title="How likely the model thinks this pick is to win">Model's chance</th><th title="How much higher the model's chance is than the odds imply">Edge</th><th title="The model's guess for the stat">Projection</th></tr>` +
     (rows.map(r => `<tr><td>${esc(r.player)} <small style="color:var(--muted)">${esc(r.team)}</small></td><td>${esc(pickLabel(r))}${r.kind === "alt" ? " <small style='color:var(--muted)'>(alt)</small>" : ""}</td>
-      <td><span class="pill ${r.side === "Over" ? "o" : "u"}">${esc(r.side)}</span> ${esc(r.line)}</td><td>${price(r.price)}</td><td>${pct(r.model_prob)}</td><td>+${(r.edge * 100).toFixed(1)}%</td><td>${fmt(r.proj_mean)}</td></tr>`).join("") ||
-      `<tr><td colspan="7" style="color:var(--muted);text-align:left">No flagged plays right now. They appear once DraftKings posts lines before a game.</td></tr>`);
+      <td><span class="pill ${r.side === "Over" ? "o" : "u"}" title="${SIDE_TIP(r.side)}">${esc(r.side)}</span> ${esc(r.line)}</td><td>${priceTip(r.price)}</td><td>${pct(r.model_prob)}</td><td>+${(r.edge * 100).toFixed(1)}%</td><td>${fmt(r.proj_mean)}</td></tr>`).join("") ||
+      `<tr><td colspan="7" style="color:var(--muted);text-align:left">No picks right now. They show up once DraftKings posts lines before a game.</td></tr>`);
 }
 function recordTable() {
   const rows = ((BOARD.record || {}).recent || []).filter(r => r.sport === SPORT);
-  $("#recent-picks").innerHTML = `<tr><th>Date</th><th>Player</th><th>Market</th><th>Pick</th><th>Price</th><th>Model</th><th>Actual</th><th>Result</th></tr>` +
+  $("#recent-picks").innerHTML = `<tr><th>Date</th><th>Player</th><th>Market</th><th>Pick</th><th>Odds</th><th>Model's chance</th><th>What happened</th><th title="Profit or loss on a $100 bet">Result ($100 bet)</th></tr>` +
     (rows.map(r => `<tr><td>${when(r.start_time, {month: "numeric", day: "numeric"})}</td><td>${esc(r.player)} <small style="color:var(--muted)">${esc(r.team)}</small></td><td>${esc(pickLabel(r))}</td>
-      <td><span class="pill ${r.side === "Over" ? "o" : "u"}">${esc(r.side)}</span> ${esc(r.line)}</td><td>${price(r.price)}</td><td>${pct(r.model_prob)}</td><td>${fmt(r.actual)}</td>
-      <td class="${r.result === "win" ? "pos" : "neg"}">${r.result === "win" ? "Win" : "Loss"} ${r.profit_units != null ? `(${r.profit_units > 0 ? "+" : ""}${(+r.profit_units).toFixed(2)}u)` : ""}</td></tr>`).join("") ||
-      `<tr><td colspan="8" style="color:var(--muted);text-align:left">Graded plays appear after games finish.</td></tr>`);
+      <td><span class="pill ${r.side === "Over" ? "o" : "u"}" title="${SIDE_TIP(r.side)}">${esc(r.side)}</span> ${esc(r.line)}</td><td>${priceTip(r.price)}</td><td>${pct(r.model_prob)}</td><td>${fmt(r.actual)}</td>
+      <td class="${r.result === "win" ? "pos" : "neg"}">${r.result === "win" ? "Win" : "Loss"} ${r.profit_units != null ? `(${r.profit_units >= 0 ? "+$" : "−$"}${Math.abs(r.profit_units * 100).toFixed(0)})` : ""}</td></tr>`).join("") ||
+      `<tr><td colspan="8" style="color:var(--muted);text-align:left">Results appear after games finish.</td></tr>`);
 }
 
 function winnersTable(pg) {
