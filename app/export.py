@@ -1,6 +1,7 @@
 """
-Export the GitHub Pages data (docs/data/board.json): expected stat lines for every player in
-upcoming games, game context (weather, rest, injuries) and projection accuracy. No prices.
+Export the GitHub Pages data (docs/data/board.json): expected stat lines for every
+player in upcoming games, game context (weather, rest, injuries) and projection accuracy.
+No prices on the main statboard; full pick ledger, CLV, and steam deltas in `record`.
 """
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ from pathlib import Path
 from sqlalchemy import text
 
 from app.db.base import session_scope
+from app.engine.odds_math import devig_shin
 from app.engine.record import breakdown
 from app.engine.scanner import jsonable
 from app.engine.statboard import NBA_STATS, NFL_STATS
@@ -128,20 +130,14 @@ ORDER BY pk.edge DESC LIMIT 60
 """
 
 
-def _implied(american) -> float | None:
-    if american is None:
-        return None
-    return 100 / (american + 100) if american > 0 else -american / (-american + 100)
-
-
 def win_info(L: dict | None) -> dict | None:
     """Projected winner from DraftKings' moneyline (margin removed) and projected score from spread + total."""
     if not L:
         return None
-    ph, pa = _implied(L.get("ml_home")), _implied(L.get("ml_away"))
-    if ph is None or pa is None:
+    ml_h, ml_a = L.get("ml_home"), L.get("ml_away")
+    if ml_h is None or ml_a is None:
         return None
-    home = ph / (ph + pa)
+    home = devig_shin([int(ml_h), int(ml_a)])[0]
     out = {"home": round(home, 3), "away": round(1 - home, 3), "pick": "home" if home >= 0.5 else "away"}
     if L.get("total") is not None and L.get("spread") is not None:
         out["score_home"] = round((L["total"] - L["spread"]) / 2, 1)
