@@ -56,7 +56,7 @@ WF = ROOT / ".github" / "workflows"
 
 
 @pytest.mark.parametrize("name,cron", [("01_daily_ingest.yml", "0 13 * * *"), ("03_postgame_grade.yml", "0 9 * * *"),
-                                        ("02_odds_snapshot.yml", "*/30 15-23,0-4 * * *")])
+                                        ("02_odds_snapshot.yml", "0 15,17,19,21,23,1,3 * * *")])
 def test_workflow_schedule_and_concurrency(name, cron):
     text = (WF / name).read_text()
     assert f'cron: "{cron}"' in text
