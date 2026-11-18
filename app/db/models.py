@@ -291,6 +291,7 @@ class Pick(Base):
     actual: Mapped[float | None] = mapped_column(Float)
     result: Mapped[str | None] = mapped_column(String(6))                   # win | loss | push | void | pulled
     profit_units: Mapped[float | None] = mapped_column(Float)
+    graded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (UniqueConstraint("game_id", "player_id", "market_key", "kind", "side", "line"),)
 
 

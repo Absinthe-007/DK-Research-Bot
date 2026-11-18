@@ -1,6 +1,6 @@
 """
-+EV scanner: latest DraftKings prop prices x model projections -> edges, Kelly sizing, and
-the `picks` ledger (flagged edges frozen at their last pre-game state for grading).
++EV scanner: latest DraftKings prop prices x model projections -> edges, Kelly sizing,
+and the `picks` ledger (flagged edges frozen at their last pre-game state for grading).
 """
 from __future__ import annotations
 
@@ -18,21 +18,24 @@ from app.db.models import Projection as ProjRow
 from app.engine.distributions import market_implied_mean, prob_over_under, refit_at_mean
 from app.engine.ev import screen
 from app.engine.kelly import BetCandidate, allocate
-from app.engine.odds_math import devig_power
+from app.engine import odds_math
 from app.engine.projector import MODEL_VERSION, project
 from app.ingestion.common import tracked
 
 log = logging.getLogger(__name__)
 
+# Use Shin vig removal if available (commit a3e69b9), fallback to power method
+_devig = getattr(odds_math, "devig_shin", odds_math.devig_power)
+
 CURRENT_PROPS_SQL = """
-SELECT * FROM current_props WHERE sport=:sport AND start_time > now()
+SELECT * FROM current_props
+WHERE sport=:sport AND start_time > now()
 ORDER BY game_id, player_id, market_key, kind, line
 """
 
 
 def jsonable(d):
     from decimal import Decimal
-
     import numpy as np
     if isinstance(d, Decimal):
         return float(d)
@@ -49,14 +52,24 @@ def jsonable(d):
     return d
 
 
+def _fair_two_way(over_row: dict, under_row: dict) -> list[float]:
+    """De-vig a two-way Over/Under pair. If either price was estimated (-115 placeholder),
+    assume a symmetric 50/50 split on the line rather than trusting a mix of real + placeholder juice."""
+    if over_row.get("price_estimated") or under_row.get("price_estimated"):
+        return [0.5, 0.5]
+    return _devig([over_row["price"], under_row["price"]])
+
+
 @tracked("ev_scan")
 async def scan(sport: str) -> int:
     st = get_settings()
     async with session_scope() as s:
         props = (await s.execute(text(CURRENT_PROPS_SQL), {"sport": sport})).mappings().all()
+
         markets: dict[tuple, dict] = defaultdict(dict)
         for p in props:
             markets[(p["game_id"], p["player_id"], p["market_key"], p["kind"], p["line"])][p["side"]] = p
+
         by_player: dict[tuple, list] = defaultdict(list)
         for (gid, pid, mkey, kind, line), sides in markets.items():
             by_player[(gid, pid, mkey)].append((kind, line, sides))
@@ -75,9 +88,16 @@ async def scan(sport: str) -> int:
             # main two-way line = the pair priced closest to 50/50 (estimated prices count: the LINE is still DK's)
             pairs = [(line, sides) for kind, line, sides in entries if kind == "ou" and "Over" in sides and "Under" in sides]
             if pairs:
-                line0, sides0 = min(pairs, key=lambda x: abs(devig_power([x[1]["Over"]["price"], x[1]["Under"]["price"]])[0] - 0.5))
-                fair_over = devig_power([sides0["Over"]["price"], sides0["Under"]["price"]])[0]
-                m_mkt = market_implied_mean(proj.dist, line0, fair_over)
+                line0, sides0 = min(
+                    pairs,
+                    key=lambda x: abs(_fair_two_way(x[1]["Over"], x[1]["Under"])[0] - 0.5),
+                )
+                fair_over_cond = _fair_two_way(sides0["Over"], sides0["Under"])[0]
+                # Account for push probability on integer lines (e.g. 20.0 pts) so conditional
+                # non-push probability isn't mistaken for unconditional P(X > line0)
+                _, _, push0 = prob_over_under(proj.dist, line0)
+                fair_over_uncond = fair_over_cond * (1.0 - push0)
+                m_mkt = market_implied_mean(proj.dist, line0, fair_over_uncond)
                 if m_mkt is not None:
                     anchors[ck] = (m_mkt, line0)
 
@@ -107,50 +127,76 @@ async def scan(sport: str) -> int:
                 w = st.model_weight_for(ck[2])
                 blended = w * proj.mean * c + (1 - w) * m_mkt
                 anchored = refit_at_mean(proj.dist, blended)
-                proj.inputs.update(model_mean=proj.mean, slate_calibration=c, market_mean=m_mkt,
-                                   blended_mean=blended, model_weight=w, anchor_line=line0)
+                proj.inputs.update(
+                    model_mean=proj.mean, slate_calibration=c, market_mean=m_mkt,
+                    blended_mean=blended, model_weight=w, anchor_line=line0,
+                )
                 gap = abs(proj.mean * c - m_mkt) / max(m_mkt, 0.5)
                 if gap > st.max_model_market_gap:
                     # A 30%+ disagreement is almost always news/role the box scores can't see
                     # (minutes cap, new team, starter returning) - show it, never auto-flag it.
-                    proj.flags.append(f"MODEL FAR FROM MARKET ({proj.mean * c:.1f} vs {m_mkt:.1f}) - likely role/news change")
+                    proj.flags.append(
+                        f"MODEL FAR FROM MARKET ({proj.mean * c:.1f} vs {m_mkt:.1f}) - likely role/news change"
+                    )
                     proj.inputs["suppressed"] = True
             else:
                 proj.flags.append("NO TWO-WAY MARKET TO ANCHOR - informational only")
-            dist = anchored or proj.dist
+
+            if anchored is not None:     # store the distribution actually used before scoring lines
+                proj.dist, proj.mean, proj.std = anchored, anchored.mean, anchored.std
+
             for kind, line, sides in entries:
-                over_p, under_p, push = prob_over_under(dist, line)
+                # Use empirical-blended probabilities for standard O/U lines, pure parametric for alt ladders
+                if kind == "ou":
+                    pr = proj.probs(line, blend=True)
+                    over_p, under_p, push = pr["over"], pr["under"], pr["push"]
+                else:
+                    over_p, under_p, push = prob_over_under(proj.dist, line)
+
                 over, under = sides.get("Over"), sides.get("Under")
-                fair = devig_power([over["price"], under["price"]]) if (over and under) else [None, None]
+                if over and under and not (over.get("price_estimated") or under.get("price_estimated")):
+                    fair_cond = _devig([over["price"], under["price"]])
+                    # Scale conditional non-push fair probability to unconditional win probability
+                    fair = [fair_cond[0] * (1.0 - push), fair_cond[1] * (1.0 - push)]
+                else:
+                    fair = [None, None]
+
                 for row, p_win, f in ((over, over_p, fair[0]), (under, under_p, fair[1])):
                     if row is None:
                         continue
-                    flags = proj.flags + (["DK PRICE NOT PUBLISHED - assumed -115, check the app"]
-                                          if row.get("price_estimated") else [])
+                    is_est = bool(row.get("price_estimated"))
+                    flags = proj.flags + (["DK PRICE NOT PUBLISHED - assumed -115, check the app"] if is_est else [])
                     res = screen(row["side"], line, row["price"], p_win, push, f, st.edge_threshold, flags)
                     if kind == "alt":
                         # one-sided ladders carry a bigger, unknowable hold -> stricter bar + price band
-                        res.flagged = (res.edge >= st.alt_edge_threshold
-                                       and st.alt_min_price <= row["price"] <= st.alt_max_price)
-                    if anchored is None or proj.inputs.get("suppressed"):
-                        res.flagged = False   # no market anchor / implausible gap: informational only
+                        res.flagged = (
+                            res.edge >= st.alt_edge_threshold
+                            and st.alt_min_price <= row["price"] <= st.alt_max_price
+                        )
+                    if anchored is None or proj.inputs.get("suppressed") or is_est:
+                        res.flagged = False   # no market anchor / implausible gap / fake price: informational only
                     results.append((proj, row, kind, res))
-            if anchored is not None:     # store the distribution actually used
-                proj.dist, proj.mean, proj.std = anchored, anchored.mean, anchored.std
 
         # ---- persist projections + edges (latest scan only)
         await s.execute(delete(Edge).where(Edge.sport == sport))
-        await s.execute(text("""DELETE FROM projections p USING games g WHERE p.game_id=g.id AND g.sport=:sp
-                                AND p.model_version=:v AND g.start_time > now()"""), {"sp": sport, "v": MODEL_VERSION})
-        proj_ids: dict[tuple, int] = {}
+        await s.execute(
+            text("""DELETE FROM projections p USING games g
+                    WHERE p.game_id=g.id AND g.sport=:sp AND g.start_time > now()"""),
+            {"sp": sport},
+        )
+        proj_rows: list[tuple[tuple, ProjRow]] = []
         for proj in filter(None, proj_cache.values()):
-            row = ProjRow(game_id=proj.game_id, player_id=proj.player_id, market_key=proj.market_key,
-                          model_version=MODEL_VERSION, mean=proj.mean, std=proj.std, dist_family=proj.dist.family,
-                          dist_params=jsonable(proj.dist.params), sample_size=proj.sample_size,
-                          inputs=jsonable({**proj.inputs, "flags": proj.flags, "recent": proj.history[-10:]}))
+            row = ProjRow(
+                game_id=proj.game_id, player_id=proj.player_id, market_key=proj.market_key,
+                model_version=MODEL_VERSION, mean=proj.mean, std=proj.std,
+                dist_family=proj.dist.family, dist_params=jsonable(proj.dist.params),
+                sample_size=proj.sample_size,
+                inputs=jsonable({**proj.inputs, "flags": proj.flags, "recent": proj.history[-10:]}),
+            )
             s.add(row)
-            await s.flush()
-            proj_ids[(proj.game_id, proj.player_id, proj.market_key)] = row.id
+            proj_rows.append(((proj.game_id, proj.player_id, proj.market_key), row))
+        await s.flush()
+        proj_ids: dict[tuple, int] = {k: r.id for k, r in proj_rows}
 
         # One play per player+market: a ladder of correlated alt lines is ONE opinion, not five bets.
         best: dict[tuple, tuple] = {}
@@ -164,11 +210,15 @@ async def scan(sport: str) -> int:
             if item[3].flagged and id(item) not in keep:
                 item[3].flagged = False
                 item[3].flags = item[3].flags + ["SUPERSEDED by a better line for this player/market"]
+
         flagged = [r for r in results if r[3].flagged]
-        sizing = allocate([BetCandidate(str(i), p.game_id, r.model_prob, r.price, r.push_prob)
-                           for i, (p, _row, _k, r) in enumerate(flagged)],
-                          st.bankroll, st.kelly_fraction, st.max_stake_pct, st.max_total_exposure_pct)
+        sizing = allocate(
+            [BetCandidate(str(i), p.game_id, r.model_prob, r.price, r.push_prob)
+             for i, (p, _row, _k, r) in enumerate(flagged)],
+            st.bankroll, st.kelly_fraction, st.max_stake_pct, st.max_total_exposure_pct,
+        )
         flagged_ids = {id(x): str(i) for i, x in enumerate(flagged)}
+
         for item in results:
             p, row, kind, r = item
             k = sizing.get(flagged_ids.get(id(item), ""), {"kelly_full": 0.0, "stake_pct": 0.0})
