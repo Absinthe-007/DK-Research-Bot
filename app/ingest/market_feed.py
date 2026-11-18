@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -75,7 +76,10 @@ def _dt(s) -> datetime | None:
     if not s:
         return None
     try:
-        d = datetime.fromisoformat(str(s).replace("Z", "+00:00").replace(" ", "T", 1))
+        txt = str(s).strip().replace("Z", "+00:00").replace(" ", "T", 1)
+        # Python 3.10 rejects short offsets like "+00" / "-05"; pad to "+00:00".
+        txt = re.sub(r"([+-]\d{2})$", r"\1:00", txt) if "T" in txt else txt
+        d = datetime.fromisoformat(txt)
     except ValueError:
         return None
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
