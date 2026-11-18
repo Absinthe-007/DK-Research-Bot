@@ -141,7 +141,8 @@ def nba_minutes_factor(
     if is_b2b:
         f *= 0.965 if is_3in4 else 0.97
         lbl = "BACK-TO-BACK (2nd leg, 3-in-4)" if is_3in4 else "BACK-TO-BACK (2nd leg)"
-        flags.append(f"{lbl} - check load-management news")    return f, flags
+        flags.append(f"{lbl} - check load-management news")
+    return f, flags
 
 
 def with_without_factor(rate_with: float, n_with: int, rate_without: float, n_without: int,
