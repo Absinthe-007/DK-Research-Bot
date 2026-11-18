@@ -7,6 +7,7 @@ from app.engine.odds_math import (
     implied_to_american,
     remove_vig_multiplicative,
     remove_vig_power,
+    remove_vig_shin,
 )
 from app.engine.ev import calculate_ev
 from app.engine.kelly import calculate_kelly_stake
@@ -98,3 +99,31 @@ def test_implied_to_american_underdog_and_invalid():
     assert implied_to_american(0.40) == 150
     with pytest.raises(ValueError):
         implied_to_american(1.0)
+
+
+def test_shin_sums_to_one_and_symmetric():
+    res = remove_vig_shin([-110, -110])
+    assert sum(res) == pytest.approx(1.0, abs=1e-9)
+    assert res[0] == pytest.approx(0.5, abs=1e-6)
+
+
+def test_shin_lopsided_market_shrinks_longshot_more_than_multiplicative():
+    odds = [-400, 300]
+    shin = remove_vig_shin(odds)
+    mult = remove_vig_multiplicative(odds)
+    assert sum(shin) == pytest.approx(1.0, abs=1e-9)
+    assert all(0.0 < p < 1.0 for p in shin)
+    # Favorite-longshot bias: Shin gives the favorite more, the longshot less
+    assert shin[0] > mult[0]
+    assert shin[1] < mult[1]
+
+
+def test_shin_three_way_market():
+    res = remove_vig_shin([-150, 280, 320])
+    assert sum(res) == pytest.approx(1.0, abs=1e-9)
+    assert all(p > 0 for p in res)
+
+
+def test_shin_fair_market_passthrough():
+    res = remove_vig_shin([100, 100])
+    assert res == pytest.approx([0.5, 0.5])
