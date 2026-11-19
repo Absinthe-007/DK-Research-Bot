@@ -36,6 +36,7 @@ STATE = Path(
     os.environ.get("STATE_PATH")
     or Path(__file__).resolve().parent.parent / "state" / "state.json"
 )
+STALE_AFTER = timedelta(hours=6)  # planner errors force a refresh once data is this old
 SLACK = timedelta(minutes=8)  # kept for backwards compatibility with existing unit tests
 
 CHECKPOINTS = {
@@ -68,16 +69,27 @@ def save_state(state: dict) -> None:
 
 
 async def upcoming_starts(sport: str, now: datetime) -> list[datetime]:
-    d_start = now - timedelta(days=1)
-    d_end = now + timedelta(days=3)
+    """Future, not-yet-started game times. One scoreboard request per calendar day: ESPN answers
+    HTTP 400 to multi-day `dates=A-B` ranges (single dates work), which silently stopped every
+    scheduled refresh in Nov 2026. A day that fails is skipped; only if every day fails do we raise."""
     url = f"https://site.api.espn.com/apis/site/v2/sports/{ESPN_PATH[sport]}/scoreboard"
-    body, _ = await http().get(
-        url,
-        params={"dates": f"{d_start:%Y%m%d}-{d_end:%Y%m%d}", "limit": 500},
-    )
-    events = body.get("events", [])
+    events: dict[str, dict] = {}
+    errors: list[Exception] = []
+    days = 5
+    for offset in range(-1, days - 1):          # yesterday .. +3 days (UTC-ish, covers late US games)
+        day = now + timedelta(days=offset)
+        try:
+            body, _ = await http().get(url, params={"dates": f"{day:%Y%m%d}", "limit": 300})
+        except Exception as e:                  # noqa: BLE001 - one bad day shouldn't hide the rest
+            errors.append(e)
+            continue
+        for e in body.get("events", []):
+            if "id" in e:
+                events[e["id"]] = e
+    if errors and len(errors) == days:
+        raise errors[0]
     out = []
-    for e in {e["id"]: e for e in events if "id" in e}.values():
+    for e in events.values():
         comps = e.get("competitions") or []
         if not comps:
             continue
@@ -122,8 +134,9 @@ async def plan(now: datetime | None = None) -> dict:
             last_dt = last_dt.replace(tzinfo=timezone.utc)
         try:
             starts = await upcoming_starts(sport, now)
-        except Exception as e:      # ESPN hiccup: don't run blind, try next tick
-            result[sport] = {"due": False, "error": str(e)}
+        except Exception as e:      # ESPN down: normally retry next tick, but never go stale for long
+            stale = last_dt is None or (now - last_dt) > STALE_AFTER
+            result[sport] = {"due": stale, "error": str(e), "stale_fallback": stale}
             continue
         hits = due(starts, CHECKPOINTS[sport], last_dt, now)
         result[sport] = {
