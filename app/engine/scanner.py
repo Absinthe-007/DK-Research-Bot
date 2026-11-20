@@ -15,6 +15,8 @@ from app.config import get_settings
 from app.db.base import session_scope
 from app.db.models import Edge
 from app.db.models import Projection as ProjRow
+from app.engine.calibration import apply_shrink
+from app.engine.shrink_fit import current_shrink
 from app.engine.distributions import market_implied_mean, prob_over_under, refit_at_mean
 from app.engine.ev import screen
 from app.engine.kelly import BetCandidate, allocate
@@ -212,8 +214,13 @@ async def scan(sport: str) -> int:
                 item[3].flags = item[3].flags + ["SUPERSEDED by a better line for this player/market"]
 
         flagged = [r for r in results if r[3].flagged]
+        # Size stakes on the HONEST chance (claimed gap shrunk toward the fair price by what graded picks have
+        # delivered); flagging and the stored ledger keep the raw numbers. Bets whose honest EV is <= 0 get no stake.
+        shrink = await current_shrink(s)
+        log.info("%s Kelly sizing on shrunk probabilities (shrink %.2f)", sport, shrink)
         sizing = allocate(
-            [BetCandidate(str(i), p.game_id, r.model_prob, r.price, r.push_prob)
+            [BetCandidate(str(i), p.game_id,
+                          apply_shrink(r.model_prob, r.model_prob - r.edge, shrink), r.price, r.push_prob)
              for i, (p, _row, _k, r) in enumerate(flagged)],
             st.bankroll, st.kelly_fraction, st.max_stake_pct, st.max_total_exposure_pct,
         )
