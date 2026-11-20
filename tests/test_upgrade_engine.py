@@ -104,3 +104,21 @@ def test_calibrator_identity_when_underfit_and_improves_brier_when_fitted():
     rel = cal.reliability_table(probs, outcomes, bins=5)
     assert sum(r["n"] for r in rel) == 600
     assert cal.shrink_to_market(0.6, 0.5, 0.35) == pytest.approx(0.535)
+
+
+def test_fit_shrink_and_apply():
+    import numpy as np
+
+    from app.engine import calibration as cal
+
+    rng = np.random.default_rng(0)
+    ref = rng.uniform(0.45, 0.6, 2000)
+    model = np.clip(ref + rng.normal(0, 0.1, 2000), 0.05, 0.95)
+    true_p = ref + 0.3 * (model - ref)                      # only 30% of the claimed gap is real
+    y = (rng.random(2000) < true_p).astype(int)
+    k = cal.fit_shrink(model, ref, y)
+    assert 0.15 <= k <= 0.5
+    assert cal.fit_shrink(model[:10], ref[:10], y[:10]) == cal.DEFAULT_SHRINK       # too few picks -> default
+    assert cal.apply_shrink(0.7, 0.5, 0.5) == pytest.approx(0.6)
+    assert cal.apply_shrink(0.5, 0.5, 0.5) == pytest.approx(0.5)
+    assert 0 < cal.apply_shrink(1.0, 0.99, 1.0) < 1

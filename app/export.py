@@ -13,6 +13,7 @@ from pathlib import Path
 from sqlalchemy import text
 
 from app.db.base import session_scope
+from app.engine.calibration import DEFAULT_SHRINK, apply_shrink, fit_shrink
 from app.engine.odds_math import devig_shin, implied_prob
 from app.engine.record import breakdown
 from app.engine.scanner import jsonable
@@ -139,7 +140,7 @@ FROM picks GROUP BY sport
 PICKS_RECENT_SQL = """
 SELECT pk.sport, g.start_time, p.full_name player, p.team_abbr team,
        pk.market_key, pk.kind, pk.side, pk.line, pk.price, pk.first_price, pk.close_price,
-       pk.model_prob, pk.actual, pk.result, pk.profit_units
+       pk.model_prob, pk.edge, pk.actual, pk.result, pk.profit_units
 FROM picks pk JOIN players p ON p.id=pk.player_id JOIN games g ON g.id=pk.game_id
 WHERE pk.result IN ('win','loss','push')
 ORDER BY g.start_time DESC, pk.id DESC LIMIT 40
@@ -225,6 +226,29 @@ async def export() -> Path:
     OUT.mkdir(parents=True, exist_ok=True)
     board: dict = {"generated_at": datetime.now(timezone.utc).isoformat(), "sports": {}}
     async with session_scope() as s:
+        # Honesty shrink: the raw model chance has run ~8 pts hotter than results, so every chance shown on the page
+        # is pulled back toward the odds-implied chance by a factor fitted on the graded picks (stored raw in the DB).
+        graded_rows: list[dict] = []
+        shrink = DEFAULT_SHRINK
+        try:
+            graded_rows = [dict(r) for r in (await s.execute(text(PICKS_GRADED_SQL))).mappings().all()]
+            fit_rows = [r for r in graded_rows if r["result"] in ("win", "loss") and r.get("edge") is not None]
+            shrink = fit_shrink(
+                [float(r["model_prob"]) for r in fit_rows],
+                [float(r["model_prob"]) - float(r["edge"]) for r in fit_rows],
+                [1 if r["result"] == "win" else 0 for r in fit_rows],
+            )
+            log.info("honesty shrink %.2f fitted on %d graded picks", shrink, len(fit_rows))
+        except Exception as e:                         # never block the board
+            log.warning("shrink fit skipped, using default: %s", e)
+
+        def honest(model_prob, edge):
+            """Calibrated chance and edge from the raw pair (reference chance = model chance - edge)."""
+            m = float(model_prob)
+            ref = m - float(edge or 0.0)
+            p = apply_shrink(m, ref, shrink)
+            return round(p, 3), round(p - ref, 4)
+
         for sp, defs in (("NBA", NBA_STATS), ("NFL", NFL_STATS)):
             games = [dict(r) for r in (await s.execute(text(GAMES_SQL), {"sp": sp})).mappings().all()]
             inj = [dict(r) for r in (await s.execute(text(INJ_SQL), {"sp": sp})).mappings().all()]
@@ -250,7 +274,7 @@ async def export() -> Path:
                         continue
                     k = "o" if r["side"] == "Over" else "u"
                     slot[k] = r["price"]
-                    slot["p" + k] = round(float(r["model_prob"]), 3)
+                    slot["p" + k] = honest(r["model_prob"], r["edge"])[0]
                     slot["est"] = int(bool(r["price_estimated"])) or slot.get("est", 0)
             except Exception as e:
                 log.warning("prop lines skipped: %s", e)
@@ -314,11 +338,26 @@ async def export() -> Path:
         try:
             summ = [dict(r) for r in (await s.execute(text(PICKS_SUMMARY_SQL))).mappings().all()]
             leans = [dict(r) for r in (await s.execute(text(LEANS_SQL))).mappings().all()]
+            for L in leans:                            # show the honest chance and edge; the ledger keeps the raw ones
+                L["model_prob_raw"], L["edge_raw"] = L["model_prob"], L["edge"]
+                L["model_prob"], L["edge"] = honest(L["model_prob"], L["edge"])
+            recent = [dict(r) for r in (await s.execute(text(PICKS_RECENT_SQL))).mappings().all()]
+            for R in recent:
+                R["model_prob_raw"] = R["model_prob"]
+                R["model_prob"] = honest(R["model_prob"], R.get("edge"))[0]
+            for sm in summ:                            # average honest chance for graded picks, per sport
+                rows_ = [r for r in graded_rows if r["sport"] == sm["sport"] and r["result"] in ("win", "loss")]
+                sm["avg_model_prob_raw"] = sm["avg_model_prob"]
+                if rows_:
+                    sm["avg_model_prob"] = sum(honest(r["model_prob"], r["edge"])[0] for r in rows_) / len(rows_)
             board["record"] = jsonable({
                 "summary": summ,
-                "recent": [dict(r) for r in (await s.execute(text(PICKS_RECENT_SQL))).mappings().all()],
+                "recent": recent,
                 "leans": leans,
-                "breakdown": breakdown([dict(r) for r in (await s.execute(text(PICKS_GRADED_SQL))).mappings().all()]),
+                "shrink": shrink,
+                "breakdown": breakdown([
+                    {**r, "model_prob": honest(r["model_prob"], r.get("edge"))[0]} for r in graded_rows
+                ]),
             })
         except Exception as e:
             log.warning("picks record skipped: %s", e)

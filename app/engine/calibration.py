@@ -110,3 +110,31 @@ def shrink_to_market(model_p: float, market_p: float, weight: float) -> float:
 def logit(p: float) -> float:
     p = min(max(p, EPS), 1 - EPS)
     return math.log(p / (1 - p))
+
+
+# ---- honesty shrink: pull the stated chance back toward the odds-implied (fair) chance -----------------------------
+
+DEFAULT_SHRINK = 0.5      # used until enough graded picks exist to fit one
+MIN_SHRINK, MAX_SHRINK = 0.15, 0.85
+
+
+def fit_shrink(model_probs: Sequence[float], ref_probs: Sequence[float], outcomes: Sequence[int],
+               min_n: int = 100) -> float:
+    """Share of the model's claimed gap over the fair price that actually shows up in results.
+
+    Least squares of (outcome - fair) on (model - fair) through the origin: 1.0 means the claimed gaps are real,
+    0.0 means results track the sportsbook and the gaps are noise. Clipped to a sane band; falls back to
+    DEFAULT_SHRINK when the sample is small or the claimed gaps carry no signal to fit.
+    """
+    m, r, y = np.asarray(model_probs, float), np.asarray(ref_probs, float), np.asarray(outcomes, float)
+    x = m - r
+    denom = float(np.sum(x * x))
+    if len(m) < min_n or denom < 1e-9:
+        return DEFAULT_SHRINK
+    k = float(np.sum(x * (y - r)) / denom)
+    return float(min(MAX_SHRINK, max(MIN_SHRINK, k)))
+
+
+def apply_shrink(model_p: float, ref_p: float, k: float) -> float:
+    """Honest chance = fair chance + k x (model's claimed gap). Never leaves (0, 1)."""
+    return float(min(1 - EPS, max(EPS, ref_p + k * (model_p - ref_p))))
