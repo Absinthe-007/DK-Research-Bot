@@ -486,7 +486,11 @@ function render() {
   $("#teamsHead").textContent = SPORT === "NFL" ? "Teams this week" : "Teams playing";
   $("#teams").innerHTML = playing.map(t => `<button class="chip ${t === TEAM ? "on" : ""}" data-t="${esc(t)}" title="${esc(TN[t] || t)}">${logo(t)}${esc(t)}</button>`).join("");
   $("#posrow").innerHTML = (SPORT === "NFL" ? ["QB", "RB", "WR", "TE", "DEF", "K"] : ["G", "F", "C"]).map(p => `<button class="chip ${p === POS ? "on" : ""}" data-p="${p}">${p}</button>`).join("");
-  document.querySelectorAll("#slate .tile").forEach(b => b.onclick = () => { GAME = GAME === b.dataset.g ? "" : b.dataset.g; TEAM = ""; render(); });
+  document.querySelectorAll("#slate .tile").forEach(b => b.onclick = () => {
+    GAME = GAME === b.dataset.g ? "" : b.dataset.g; TEAM = ""; render();
+    // Jump to the focused game's card (it carries the "Projected winner" line).
+    if (GAME) { const c = document.querySelector("#games .game"); if (c) c.scrollIntoView({behavior: "smooth", block: "start"}); }
+  });
   document.querySelectorAll("#teams .chip").forEach(b => b.onclick = () => { TEAM = TEAM === b.dataset.t ? "" : b.dataset.t; GAME = ""; render(); });
   document.querySelectorAll("#posrow .chip").forEach(b => b.onclick = () => { POS = POS === b.dataset.p ? "" : b.dataset.p; render(); });
   document.querySelectorAll("#mode button").forEach(b => b.classList.toggle("on", b.dataset.m === MODE));
