@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import text
@@ -135,6 +135,21 @@ SELECT sport,
        COALESCE(SUM(profit_units) FILTER (WHERE result IN ('win','loss')), 0) units,
        AVG(model_prob) FILTER (WHERE result IN ('win','loss')) avg_model_prob
 FROM picks GROUP BY sport
+"""
+
+# Freshness: last-7-days tally, picks graded in the last 24h and the latest graded game, per sport.
+PICKS_FRESH_SQL = """
+SELECT pk.sport,
+       COUNT(*) FILTER (WHERE pk.result IN ('win','loss') AND g.start_time > now() - interval '7 days') n7,
+       COUNT(*) FILTER (WHERE pk.result='win' AND g.start_time > now() - interval '7 days') wins7,
+       COUNT(*) FILTER (WHERE pk.result='loss' AND g.start_time > now() - interval '7 days') losses7,
+       COALESCE(SUM(pk.profit_units) FILTER (WHERE pk.result IN ('win','loss')
+                AND g.start_time > now() - interval '7 days'), 0) units7,
+       COUNT(*) FILTER (WHERE pk.result IN ('win','loss') AND g.start_time > now() - interval '24 hours') n24h,
+       MAX(g.start_time) last_game
+FROM picks pk JOIN games g ON g.id=pk.game_id
+WHERE pk.result IN ('win','loss','push')
+GROUP BY pk.sport
 """
 
 PICKS_RECENT_SQL = """
@@ -345,6 +360,14 @@ async def export() -> Path:
             for R in recent:
                 R["model_prob_raw"] = R["model_prob"]
                 R["model_prob"] = honest(R["model_prob"], R.get("edge"))[0]
+            try:
+                fresh = {r["sport"]: dict(r) for r in (await s.execute(text(PICKS_FRESH_SQL))).mappings().all()}
+            except Exception as e:                     # freshness stats are a bonus: never block the record
+                log.warning("freshness stats skipped: %s", e)
+                await s.rollback()
+                fresh = {}
+            for sm in summ:
+                sm.update({k: v for k, v in fresh.get(sm["sport"], {}).items() if k != "sport"})
             for sm in summ:                            # average honest chance for graded picks, per sport
                 rows_ = [r for r in graded_rows if r["sport"] == sm["sport"] and r["result"] in ("win", "loss")]
                 sm["avg_model_prob_raw"] = sm["avg_model_prob"]
@@ -376,9 +399,15 @@ async def export() -> Path:
                         "hs": r["home_score"], "as": r["away_score"],
                         "pick": r[w["pick"]], "prob": w[w["pick"]], "ok": w["pick"] == won,
                     })
+                now_dt = datetime.now(timezone.utc)
+                last7 = [g for g in graded if g["date"] > now_dt - timedelta(days=7)]
                 board["sports"][sp]["winners"] = jsonable({
                     "n": len(graded),
                     "correct": sum(g["ok"] for g in graded),
+                    "n7": len(last7),
+                    "correct7": sum(g["ok"] for g in last7),
+                    "n24h": sum(1 for g in graded if g["date"] > now_dt - timedelta(hours=24)),
+                    "last_game": graded[0]["date"] if graded else None,
                     "avg_prob": (sum(g["prob"] for g in graded) / len(graded)) if graded else None,
                     "recent": graded[:25],
                 })

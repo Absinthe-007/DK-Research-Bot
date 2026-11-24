@@ -77,6 +77,9 @@ button{font:inherit;color:inherit;cursor:pointer}
 .card .big{font:800 44px/1.05 var(--head);margin:4px 0 2px;letter-spacing:.01em}
 .card .big small{font-size:18px;color:var(--muted);margin-left:3px}
 .card .sub{font-size:12.5px;color:var(--muted)}
+.card .d7{margin-top:8px;padding-top:7px;border-top:1px solid var(--line,rgba(128,128,128,.25));font-size:12.5px;color:var(--muted)}
+.card .d7 b{color:var(--text,inherit)}
+.stamp{font-size:12.5px;color:var(--muted);margin:2px 0 10px}
 .card .sub b{color:var(--text)}
 .bar{height:6px;background:var(--line);border-radius:6px;margin-top:10px;overflow:hidden;position:relative}
 .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),color-mix(in srgb,var(--accent) 55%,#fff));border-radius:6px}
@@ -196,6 +199,7 @@ footer .rg{margin-top:6px}
   <div class="board" id="slate"></div>
 
   <div class="sec"><h2>Scorecard</h2><span class="hint">Last 30 days, checked against final box scores</span></div>
+  <div class="stamp" id="stamp"></div>
   <div class="cards" id="hero"></div>
 
   <div class="filters">
@@ -356,8 +360,8 @@ function gameBlock(g, players, injuries) {
 }
 
 /* ---------- scorecards ---------- */
-function accSummary(S) {
-  const a = (S.accuracy || {})["30d"] || {};
+function accSummary(S, win = "30d") {
+  const a = (S.accuracy || {})[win] || {};
   const ks = Object.keys(a).filter(k => k !== "td_prob" && k !== "minutes" && S.labels[k]);
   const avg = arr => arr.length ? arr.reduce((x, y) => x + y, 0) / arr.length : null;
   const core = CORE[SPORT].filter(k => a[k]);
@@ -365,21 +369,30 @@ function accSummary(S) {
     miss: core.map(k => `${esc(S.labels[k])} ±${Math.abs(a[k].mae) >= 10 ? (+a[k].mae).toFixed(0) : (+a[k].mae).toFixed(1)}`)};
 }
 
+const d7 = html => `<div class="d7">${html}</div>`;
+function stampLine(S, rec) {
+  const W = S.winners || {}, last = [W.last_game, rec && rec.last_game].filter(Boolean).map(x => new Date(x).getTime()).sort((a, b) => b - a)[0];
+  if (!last) return "";
+  const ago = (Date.now() - last) / 36e5, agoTxt = ago < 1 ? "under an hour ago" : ago < 36 ? `${Math.round(ago)}h ago` : `${Math.round(ago / 24)} days ago`;
+  const g = W.n24h || 0, p = rec && rec.n24h || 0;
+  return `Graded through <b>${when(new Date(last).toISOString(), {weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit"})}</b> (${agoTxt}) · last 24h: <b>${g}</b> new game${g === 1 ? "" : "s"}, <b>${p}</b> new graded pick${p === 1 ? "" : "s"}`;
+}
 function heroCards(S) {
-  const R = accSummary(S), rec = ((BOARD.record || {}).summary || []).find(r => r.sport === SPORT);
+  const R = accSummary(S), R7 = accSummary(S, "7d"), rec = ((BOARD.record || {}).summary || []).find(r => r.sport === SPORT);
+  $("#stamp").innerHTML = stampLine(S, rec);
   const c1 = R.all == null ? `<div class="card"><div class="k">Projection accuracy</div><div class="sub" style="margin-top:8px">No finished games graded yet.</div></div>` :
     `<div class="card"><div class="k">Stat lines in range</div><div class="big num">${Math.round(R.all * 100)}<small>%</small></div>
       <div class="sub">Average across all ${R.ks.length} projected stats. How often the real stat landed inside the predicted range. A well-tuned model lands about <b>60%</b>; higher means the ranges are on the wide side.</div>
-      <div class="bar"><i style="width:${R.all * 100}%"></i><u style="left:60%" title="60% = what a perfect model scores"></u></div></div>`;
+      <div class="bar"><i style="width:${R.all * 100}%"></i><u style="left:60%" title="60% = what a perfect model scores"></u></div>${R7.all == null ? "" : d7(`Last 7 days: <b>${Math.round(R7.all * 100)}%</b>`)}</div>`;
   const c2 = R.core == null ? "" : `<div class="card"><div class="k">Headline stats in range</div><div class="big num">${Math.round(R.core * 100)}<small>%</small></div>
       <div class="sub">${R.miss.join(" · ")}<br>average miss per player-game</div>
-      <div class="bar"><i style="width:${R.core * 100}%"></i><u style="left:60%"></u></div></div>`;
+      <div class="bar"><i style="width:${R.core * 100}%"></i><u style="left:60%"></u></div>${R7.core == null ? "" : d7(`Last 7 days: <b>${Math.round(R7.core * 100)}%</b> · ${R7.miss.join(" · ")}`)}</div>`;
   const hit = rec && rec.n ? rec.wins / rec.n : null, roi = rec && rec.n ? rec.units / rec.n : null;
   const c3 = !rec || !rec.n ? "" : `<div class="card"><div class="k">Model's picks, checked</div><div class="big num ${roi >= 0 ? "pos" : "neg"}">${per100(roi)}<small>per $100 bet</small></div>
-      <div class="sub"><b>${rec.wins}–${rec.losses}</b> (won ${pct(hit)} of picks) · <b class="${rec.units >= 0 ? "pos" : "neg"}" title="1 unit = one standard bet">${rec.units >= 0 ? "+" : "−"}${Math.abs(rec.units).toFixed(1)} units</b><br>After adjusting for past over-confidence, the model's chance averages ${pct(rec.avg_model_prob)}${rec.avg_model_prob_raw ? ` (raw ${pct(rec.avg_model_prob_raw)})` : ""}. The sportsbook's built-in fee means a pick needs roughly 52–55% to break even.</div></div>`;
+      <div class="sub"><b>${rec.wins}–${rec.losses}</b> (won ${pct(hit)} of picks) · <b class="${rec.units >= 0 ? "pos" : "neg"}" title="1 unit = one standard bet">${rec.units >= 0 ? "+" : "−"}${Math.abs(rec.units).toFixed(1)} units</b><br>After adjusting for past over-confidence, the model's chance averages ${pct(rec.avg_model_prob)}${rec.avg_model_prob_raw ? ` (raw ${pct(rec.avg_model_prob_raw)})` : ""}. The sportsbook's built-in fee means a pick needs roughly 52–55% to break even.</div>${rec.n7 ? d7(`Last 7 days: <b>${rec.wins7}–${rec.losses7}</b> · <b class="${rec.units7 >= 0 ? "pos" : "neg"}">${per100(rec.units7 / rec.n7)}</b> per $100`) : ""}</div>`;
   const W = S.winners, c4 = !W || !W.n ? "" : `<div class="card"><div class="k">Winner picks</div><div class="big num">${Math.round(W.correct / W.n * 100)}<small>% right</small></div>
       <div class="sub"><b>${W.correct}–${W.n - W.correct}</b> straight up on ${W.n} finished games. The picks were ${pct(W.avg_prob)} confident on average, so they are well calibrated.</div>
-      <div class="bar"><i style="width:${W.correct / W.n * 100}%"></i><u style="left:${(W.avg_prob || 0) * 100}%" title="Average confidence"></u></div></div>`;
+      <div class="bar"><i style="width:${W.correct / W.n * 100}%"></i><u style="left:${(W.avg_prob || 0) * 100}%" title="Average confidence"></u></div>${W.n7 ? d7(`Last 7 days: <b>${Math.round(W.correct7 / W.n7 * 100)}%</b> right (${W.correct7}–${W.n7 - W.correct7})`) : ""}</div>`;
   return c4 + c1 + c2 + c3;
 }
 
