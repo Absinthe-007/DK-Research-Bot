@@ -1,11 +1,11 @@
 name: 03 postgame grade
 
-# 4:00 AM EST = 09:00 UTC (5:00 AM EDT in summer). Loads final box scores and participation evidence, grades open
+# 09:00 Nairobi (EAT, UTC+3, no DST) = 06:00 UTC (1:00 AM EST / 2:00 AM EDT). Loads final box scores and participation evidence, grades open
 # picks (active players with 0 stats are misses; only confirmed non-participants are voided), and logs CLV.
 # The original nightly job in pipeline.yml (09:41 UTC) still runs and is unaffected.
 on:
   schedule:
-    - cron: "0 9 * * *"
+    - cron: "0 6 * * *"
   workflow_dispatch:
     inputs:
       sport:
