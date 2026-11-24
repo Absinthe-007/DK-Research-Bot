@@ -459,7 +459,10 @@ function winnersTable(pg) {
 /* ---------- main render ---------- */
 function render() {
   const S = BOARD.sports[SPORT] || {};
-  const games = S.games || [], all = S.players || [];
+  // Hide games that must be over (the board only rebuilds around kickoffs), so finished games never sit on top of the next ones.
+  const OVER = (SPORT === "NFL" ? 3.75 : 3) * 3600e3, nowMs = Date.now();
+  const games = (S.games || []).filter(g => nowMs < new Date(g.start_time).getTime() + OVER);
+  const liveIds = new Set(games.map(g => g.id)), all = (S.players || []).filter(p => liveIds.has(p.g));
   const TN = {}; games.forEach(g => { TN[g.home] = g.home_name; TN[g.away] = g.away_name; });
   const q = norm($("#q").value.trim());
   document.documentElement.dataset.sport = SPORT;

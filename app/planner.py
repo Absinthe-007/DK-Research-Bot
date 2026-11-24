@@ -56,6 +56,11 @@ CHECKPOINTS = {
 }
 
 
+# Rebuild the board once games are over so finished games drop off and the next slate is current.
+# Must exceed export.py's "started within the last 4 hours" window so the finished games fall out.
+POST_GAME = {"NBA": timedelta(hours=4, minutes=15), "NFL": timedelta(hours=4, minutes=30)}
+
+
 def load_state() -> dict:
     try:
         return json.loads(STATE.read_text())
@@ -68,7 +73,7 @@ def save_state(state: dict) -> None:
     STATE.write_text(json.dumps(state, indent=1, sort_keys=True))
 
 
-async def upcoming_starts(sport: str, now: datetime) -> list[datetime]:
+async def upcoming_starts(sport: str, now: datetime, recent: list | None = None) -> list[datetime]:
     """Future, not-yet-started game times. One scoreboard request per calendar day: ESPN answers
     HTTP 400 to multi-day `dates=A-B` ranges (single dates work), which silently stopped every
     scheduled refresh in Nov 2026. A day that fails is skipped; only if every day fails do we raise."""
@@ -98,6 +103,8 @@ async def upcoming_starts(sport: str, now: datetime) -> list[datetime]:
         t = datetime.fromisoformat(e["date"].replace("Z", "+00:00"))
         if not st.get("completed") and state_str == "pre" and t > now:
             out.append(t)
+        elif recent is not None and t <= now:
+            recent.append(t)            # already started/finished: used for the post-game refresh
     return sorted(out)
 
 
@@ -132,13 +139,16 @@ async def plan(now: datetime | None = None) -> dict:
         last_dt = datetime.fromisoformat(last.replace("Z", "+00:00")) if last else None
         if last_dt and last_dt.tzinfo is None:
             last_dt = last_dt.replace(tzinfo=timezone.utc)
+        recent: list[datetime] = []
         try:
-            starts = await upcoming_starts(sport, now)
+            starts = await upcoming_starts(sport, now, recent)
         except Exception as e:      # ESPN down: normally retry next tick, but never go stale for long
             stale = last_dt is None or (now - last_dt) > STALE_AFTER
             result[sport] = {"due": stale, "error": str(e), "stale_fallback": stale}
             continue
         hits = due(starts, CHECKPOINTS[sport], last_dt, now)
+        # post-game: negative checkpoint = start + POST_GAME
+        hits += [h.replace("T--", "T+") for h in due(recent, [-POST_GAME[sport]], last_dt, now)]
         result[sport] = {
             "due": bool(hits),
             "checkpoints": hits,
