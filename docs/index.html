@@ -79,6 +79,18 @@ button{font:inherit;color:inherit;cursor:pointer}
 .card .sub{font-size:12.5px;color:var(--muted)}
 .card .d7{margin-top:8px;padding-top:7px;border-top:1px solid var(--line,rgba(128,128,128,.25));font-size:12.5px;color:var(--muted)}
 .card .d7 b{color:var(--text,inherit)}
+
+.tp{margin:14px 0 6px;border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:14px}
+.tp h3{margin:0 0 2px;font:800 20px var(--head);display:flex;align-items:center;gap:8px}
+.tp h3 img{width:28px;height:28px;object-fit:contain}
+.tp .sub2{color:var(--muted);font-size:12.5px;margin-bottom:10px}
+.tp .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:12px}
+.tp .st{background:var(--panel2);border-radius:10px;padding:8px 10px}
+.tp .st .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.tp .st .v{font:800 18px var(--head)}
+.tp .st .n{font-size:11.5px;color:var(--muted)}
+.tp h4{margin:12px 0 4px;font:700 13px var(--head);letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.tp .h2h{margin-top:12px}
 .stamp{font-size:12.5px;color:var(--muted);margin:2px 0 10px}
 .card .sub b{color:var(--text)}
 .bar{height:6px;background:var(--line);border-radius:6px;margin-top:10px;overflow:hidden;position:relative}
@@ -217,6 +229,7 @@ footer .rg{margin-top:6px}
     <div class="meta"><span id="qmeta"></span><button class="linkbtn" id="clear" hidden>Clear filters</button></div>
   </div>
 
+  <div id="teampanel"></div>
   <div id="games"></div>
 
   <div class="sec" id="winnersSec"><h2>Projected winners</h2><span class="hint" id="winhint"></span></div>
@@ -469,6 +482,61 @@ function winnersTable(pg) {
       `<tr><td colspan="6" style="color:var(--muted);text-align:left">Winner picks appear once DraftKings posts moneylines for the upcoming games.</td></tr>`);
 }
 
+
+/* ---------- team panel: record, toughness, and head-to-head history ---------- */
+function teamPanel(S, T, games) {
+  const R = (S.results || []).filter(r => r.st === 2 || r.st === 3);
+  if (!T) return "";
+  const TNAME = {}; (S.games || []).forEach(g => { TNAME[g.home] = g.home_name; TNAME[g.away] = g.away_name; });
+  if (!R.length) return `<div class="tp"><h3>${logo(T)}${esc(TNAME[T] || T)}</h3><div class="sub2">Past results aren't loaded yet. They appear after the next update run.</div></div>`;
+  const season = R.map(r => r.s).sort().pop();                   // newest season in the data
+  const cur = R.filter(r => r.s === season);
+  const rows = t => cur.filter(r => r.h === t || r.a === t).map(r => { const home = r.h === t;
+    return {d: r.d, opp: home ? r.a : r.h, home, neutral: r.n, pf: home ? r.hs : r.as_, pa: home ? r.as_ : r.hs}; })
+    .map(x => ({...x, w: x.pf > x.pa}));                          // newest first (data is sorted desc)
+  const sum = list => { const w = list.filter(x => x.w).length, n = list.length, pf = list.reduce((a, x) => a + x.pf, 0), pa = list.reduce((a, x) => a + x.pa, 0);
+    return {w, l: n - w, n, pf: n ? pf / n : 0, pa: n ? pa / n : 0, m: n ? (pf - pa) / n : 0, pct: n ? w / n : 0}; };
+  const teams = [...new Set(cur.flatMap(r => [r.h, r.a]))];
+  const S0 = {}; teams.forEach(t => S0[t] = sum(rows(t)));
+  const rank = [...teams].sort((a, b) => S0[b].m - S0[a].m), rk = t => rank.indexOf(t) + 1;
+  const rec = x => `${x.w}–${x.l}`, sg = v => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(1);
+  const fdate = iso => when(iso, {month: "short", day: "numeric", year: "numeric"});
+  const wl = x => `<span class="${x.w ? "pos" : "neg"}"><b>${x.w ? "W" : "L"}</b></span> ${x.pf}–${x.pa}`;
+  const mine = rows(T), A = S0[T];
+  if (!A || !A.n) return `<div class="tp"><h3>${logo(T)}${esc(TNAME[T] || T)}</h3><div class="sub2">No finished games this season yet.</div></div>`;
+  const H = sum(mine.filter(x => x.home && !x.neutral)), V = sum(mine.filter(x => !x.home && !x.neutral)), L10 = sum(mine.slice(0, 10));
+  let streak = 0; for (const x of mine) { if (x.w === mine[0].w) streak++; else break; }
+  const good = mine.filter(x => S0[x.opp] && S0[x.opp].pct > 0.5), VG = sum(good);
+  const stat = (k, v, n = "") => `<div class="st"><div class="k">${k}</div><div class="v">${v}</div>${n ? `<div class="n">${n}</div>` : ""}</div>`;
+  const hdr = `<h3>${logo(T)}${esc(TNAME[T] || T)}</h3><div class="sub2">${season} season · ${A.n} games played · finished games only</div>
+    <div class="stats">
+      ${stat("Record", rec(A), `${Math.round(A.pct * 100)}% wins · streak ${mine[0].w ? "W" : "L"}${streak}`)}
+      ${stat("At home", rec(H), "wins–losses")}
+      ${stat("On the road", rec(V), "wins–losses")}
+      ${stat("Last 10", rec(L10), "most recent games")}
+      ${stat("Scores / allows", `${A.pf.toFixed(1)} / ${A.pa.toFixed(1)}`, "points per game")}
+      ${stat("How tough", `#${rk(T)} of ${teams.length}`, `by scoring margin (${sg(A.m)} a game)`)}
+      ${stat("Vs. winning teams", good.length ? rec(VG) : "–", good.length ? "against teams above .500" : "none played yet")}
+    </div>`;
+
+  // head-to-head against whoever this team plays next on the slate
+  const next = games.filter(g => g.home === T || g.away === T);
+  const h2h = next.map(g => { const O = g.home === T ? g.away : g.home, atHome = g.home === T;
+    const past = R.filter(r => (r.h === T && r.a === O) || (r.h === O && r.a === T)).map(r => { const home = r.h === T;
+      return {d: r.d, home, neutral: r.n, pf: home ? r.hs : r.as_, pa: home ? r.as_ : r.hs, s: r.s}; }).map(x => ({...x, w: x.pf > x.pa}));
+    const W = past.filter(x => x.w).length, o = S0[O];
+    const body = past.length ? `<div class="tablewrap" style="max-height:none"><table class="t"><tr><th>Date</th><th>Where ${esc(T)} played</th><th>Result</th><th>Margin</th></tr>${past.map(x =>
+        `<tr><td>${fdate(x.d)}</td><td>${x.neutral ? "Neutral site" : x.home ? "At home" : "On the road"}</td><td>${wl(x)}</td><td>${sg(x.pf - x.pa)}</td></tr>`).join("")}</table></div>`
+      : `<div class="sub2">No earlier games between these two in the data (this season${R.some(r => r.s !== season) ? " or last" : ""}).</div>`;
+    return `<div class="h2h"><h4>Next: ${atHome ? "vs" : "at"} ${logo(O)} ${esc(TNAME[O] || O)} · ${when(g.start_time, {weekday: "short", hour: "numeric", minute: "2-digit"})}</h4>
+      <div class="sub2">${esc(O)} are <b>${o ? rec(o) : "–"}</b>${o ? ` (#${rk(O)} of ${teams.length} by scoring margin)` : ""}.
+      ${past.length ? `Earlier meetings: <b>${esc(T)} ${W}–${past.length - W}</b>${past.some(x => x.home && x.w) ? " · won at home" : ""}${past.some(x => !x.home && !x.neutral && x.w) ? " · won on the road" : ""}.` : ""}</div>${body}</div>`; }).join("");
+
+  const last = `<h4>Last 10 games</h4><div class="tablewrap" style="max-height:none"><table class="t"><tr><th>Date</th><th>Opponent</th><th>Where</th><th>Result</th></tr>${mine.slice(0, 10).map(x =>
+      `<tr><td>${fdate(x.d)}</td><td>${logo(x.opp)} ${esc(x.opp)} <small style="color:var(--muted)">${S0[x.opp] ? rec(S0[x.opp]) : ""}</small></td><td>${x.neutral ? "Neutral" : x.home ? "Home" : "Road"}</td><td>${wl(x)}</td></tr>`).join("")}</table></div>`;
+  return `<div class="tp" id="tp">${hdr}${h2h}${last}</div>`;
+}
+
 /* ---------- main render ---------- */
 function render() {
   const S = BOARD.sports[SPORT] || {};
@@ -507,7 +575,8 @@ function render() {
     // Jump to the focused game's card (it carries the "Projected winner" line).
     if (GAME) { const c = document.querySelector("#games .game"); if (c) c.scrollIntoView({behavior: "smooth", block: "start"}); }
   });
-  document.querySelectorAll("#teams .chip").forEach(b => b.onclick = () => { TEAM = TEAM === b.dataset.t ? "" : b.dataset.t; GAME = ""; render(); });
+  document.querySelectorAll("#teams .chip").forEach(b => b.onclick = () => { TEAM = TEAM === b.dataset.t ? "" : b.dataset.t; GAME = ""; render();
+    if (TEAM) { const tp = document.getElementById("tp") || document.getElementById("teampanel"); if (tp) tp.scrollIntoView({behavior: "smooth", block: "start"}); } });
   document.querySelectorAll("#posrow .chip").forEach(b => b.onclick = () => { POS = POS === b.dataset.p ? "" : b.dataset.p; render(); });
   document.querySelectorAll("#mode button").forEach(b => b.classList.toggle("on", b.dataset.m === MODE));
 
@@ -526,6 +595,7 @@ function render() {
   const shown = games.filter(g => players.some(p => p.g === g.id));
   $("#games").innerHTML = shown.map(g => gameBlock(g, players.filter(p => p.g === g.id), S.injuries || [])).join("") ||
     `<div class="empty" style="margin-top:14px">${all.length ? "No players match this search or filter." : "Projections appear after the next update run."}</div>`;
+  $("#teampanel").innerHTML = teamPanel(S, TEAM, games);
   document.querySelectorAll("tr.p").forEach(tr => tr.onclick = () => { const k = tr.dataset.k; OPEN.has(k) ? OPEN.delete(k) : OPEN.add(k); render(); });
   document.querySelectorAll("th[data-sort]").forEach(th => th.onclick = () => { SORT = SORT === th.dataset.sort ? "" : th.dataset.sort; render(); });
 

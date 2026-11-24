@@ -220,6 +220,18 @@ ORDER BY g.start_time DESC
 """
 
 
+# Every finished game (final score, who was home) so the page can show team records, home/road splits,
+# strength and head-to-head history. One row per game, short keys to keep board.json small.
+RESULTS_SQL = """
+SELECT g.start_time d, g.season s, g.season_type st, ht.abbr h, at.abbr a,
+       g.home_score hs, g.away_score as_, g.neutral_site n
+FROM games g JOIN teams ht ON ht.id=g.home_team_id JOIN teams at ON at.id=g.away_team_id
+WHERE g.sport=:sp AND g.completed AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL
+  AND g.season_type IN (2,3) AND g.start_time > now() - interval '800 days'
+ORDER BY g.start_time DESC
+"""
+
+
 def _market_to_stat(defs: dict) -> dict:
     return {v[2]: k for k, v in defs.items() if v[2]}
 
@@ -413,6 +425,14 @@ async def export() -> Path:
                 })
         except Exception as e:
             log.warning("winner record skipped: %s", e)
+
+        try:
+            for sp in ("NBA", "NFL"):
+                rows = [dict(r) for r in (await s.execute(text(RESULTS_SQL), {"sp": sp})).mappings().all()]
+                board["sports"][sp]["results"] = jsonable(rows)
+        except Exception as e:                         # team history is a bonus: never block the board
+            log.warning("team results skipped: %s", e)
+            await s.rollback()
 
         board["last_runs"] = jsonable([
             dict(r)
