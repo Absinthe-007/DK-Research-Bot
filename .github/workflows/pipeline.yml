@@ -51,8 +51,8 @@ jobs:
       mode: ${{ steps.decide.outputs.mode }}
       sports: ${{ steps.decide.outputs.sports }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Decide what to run
@@ -84,7 +84,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # one-time: unpack the uploaded code bundle into the repo (workflow files excluded)
       - name: Bootstrap from bundle
@@ -99,7 +99,7 @@ jobs:
           echo "Bootstrapped. Now run the workflow with mode=backfill."
           exit 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         if: needs.plan.outputs.mode != 'bootstrap'
         with:
           python-version: "3.12"
