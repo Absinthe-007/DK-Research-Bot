@@ -1,6 +1,6 @@
 name: 03 postgame grade
 
-# 09:00 Nairobi (EAT, UTC+3, no DST) = 06:00 UTC (1:00 AM EST / 2:00 AM EDT). Loads final box scores and participation evidence, grades open
+# 09:17 Nairobi (EAT, UTC+3, no DST) = 06:17 UTC (1:17 AM EST / 2:17 AM EDT). Loads final box scores and participation evidence, grades open
 # picks (active players with 0 stats are misses; only confirmed non-participants are voided), and logs CLV.
 # The original nightly job in pipeline.yml (09:41 UTC) still runs and is unaffected.
 on:
