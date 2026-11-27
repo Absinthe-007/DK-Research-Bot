@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 
 from sqlalchemy import text
@@ -181,6 +182,48 @@ WHERE pk.active AND pk.result IS NULL AND g.start_time > now() AND NOT g.complet
 ORDER BY pk.edge DESC LIMIT 60
 """
 
+
+# Full-history accuracy, aggregated in SQL so the page can show it by position and by player
+# without shipping every graded line. Written to docs/data/accuracy.json (separate from board.json).
+ACC_POS_SQL = """
+SELECT p.position pos, sp.stat, COUNT(sp.actual) n,
+COUNT(DISTINCT sp.player_id) FILTER (WHERE sp.actual IS NOT NULL) players,
+AVG(ABS(sp.actual-sp.mean)) mae,
+AVG(sp.actual-sp.mean) bias,
+AVG(CASE WHEN sp.actual IS NULL THEN NULL WHEN sp.actual BETWEEN sp.lo AND sp.hi THEN 1.0 ELSE 0.0 END) in_range,
+AVG(sp.mean) FILTER (WHERE sp.actual IS NOT NULL) avg_proj,
+AVG(sp.actual) avg_actual
+FROM stat_projections sp JOIN games g ON g.id=sp.game_id JOIN players p ON p.id=sp.player_id
+WHERE sp.sport=:sp AND g.completed AND g.boxscore_loaded AND p.position IS NOT NULL
+AND g.start_time > now() - make_interval(days => :days)
+GROUP BY p.position, sp.stat
+HAVING COUNT(sp.actual) > 0
+"""
+
+ACC_PLAYER_SQL = """
+SELECT p.id player_id, p.full_name player, p.position pos, p.team_abbr team, sp.stat,
+COUNT(sp.actual) n,
+AVG(ABS(sp.actual-sp.mean)) mae,
+AVG(sp.actual-sp.mean) bias,
+AVG(CASE WHEN sp.actual IS NULL THEN NULL WHEN sp.actual BETWEEN sp.lo AND sp.hi THEN 1.0 ELSE 0.0 END) in_range,
+AVG(sp.mean) FILTER (WHERE sp.actual IS NOT NULL) avg_proj,
+AVG(sp.actual) avg_actual
+FROM stat_projections sp JOIN games g ON g.id=sp.game_id JOIN players p ON p.id=sp.player_id
+WHERE sp.sport=:sp AND g.completed AND g.boxscore_loaded AND sp.stat = ANY(:stats)
+AND g.start_time > now() - make_interval(days => :days)
+GROUP BY p.id, p.full_name, p.position, p.team_abbr, sp.stat
+HAVING COUNT(sp.actual) >= 3
+ORDER BY p.position, p.full_name, sp.stat
+"""
+
+def _round_rows(rows) -> list[dict]:
+    out = []
+    for r in rows:
+        d = {}
+        for k, v in dict(r).items():
+            d[k] = round(float(v), 3) if isinstance(v, (float, Decimal)) else v
+        out.append(d)
+    return out
 
 def win_info(L: dict | None) -> dict | None:
     """Projected winner from DraftKings' moneyline (Shin vig-removed) and projected score from spread + total."""
@@ -432,6 +475,26 @@ async def export() -> Path:
                 board["sports"][sp]["results"] = jsonable(rows)
         except Exception as e:                         # team history is a bonus: never block the board
             log.warning("team results skipped: %s", e)
+            await s.rollback()
+
+        try:
+            acc_out: dict = {"generated_at": board["generated_at"], "sports": {}}
+            for sp, stats in (
+                ("NBA", ["pts", "reb", "ast", "pra"]),
+                ("NFL", ["pass_yds", "rush_yds", "rec_yds", "receptions", "tackles", "sacks"]),
+            ):
+                pos_by_window = {}
+                for label, days in (("7d", 7), ("30d", 30), ("season", 400)):
+                    pos_by_window[label] = _round_rows(
+                        (await s.execute(text(ACC_POS_SQL), {"sp": sp, "days": days})).mappings().all()
+                    )
+                player_rows = _round_rows(
+                    (await s.execute(text(ACC_PLAYER_SQL), {"sp": sp, "days": 400, "stats": stats})).mappings().all()
+                )
+                acc_out["sports"][sp] = {"positions": pos_by_window, "players": player_rows}
+            (OUT / "accuracy.json").write_text(json.dumps(acc_out, separators=(",", ":"), default=str))
+        except Exception as e:  # accuracy history is a bonus: never block the board
+            log.warning("accuracy history skipped: %s", e)
             await s.rollback()
 
         board["last_runs"] = jsonable([
