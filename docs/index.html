@@ -41,6 +41,8 @@ button{font:inherit;color:inherit;cursor:pointer}
 .seg button{border:0;background:transparent;color:var(--muted);font:700 13px var(--head);letter-spacing:.08em;text-transform:uppercase;padding:7px 16px;border-radius:999px}
 .seg button.on{background:var(--accent);color:var(--accent-ink)}
 .seg.sm button{padding:5px 11px;font-size:12px}
+.accbtn{display:inline-flex;align-items:center;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:999px;padding:8px 16px;font:700 13px var(--head);letter-spacing:.08em;text-transform:uppercase;text-decoration:none}
+.accbtn:hover{border-color:var(--accent);color:var(--accent)}
 .iconbtn{width:36px;height:36px;border-radius:50%;background:var(--panel);border:1px solid var(--line);color:var(--muted)}
 
 /* ---------- scoreboard tiles ---------- */
@@ -191,6 +193,7 @@ footer .rg{margin-top:6px}
       <div><h1>DK Research <em>Bot</em></h1><small id="updated">Loading the latest projections…</small></div>
     </div>
     <div class="ctrls">
+      <a class="accbtn" href="accuracy.html">Accuracy and teams</a>
       <div class="seg" id="tabs"><button data-s="NBA" class="on">NBA</button><button data-s="NFL">NFL</button></div>
       <button class="iconbtn" id="theme" title="Light / dark" aria-label="Toggle theme"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg></button>
     </div>
