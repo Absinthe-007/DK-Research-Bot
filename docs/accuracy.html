@@ -81,7 +81,7 @@ input[type=search]{font:inherit;padding:8px 12px;border:1px solid var(--line);bo
 </div>
 <script>
 (function(){
-var B=null,A=null,sport='NBA',view='stat',win='30d',posFilter='All',q='',h2hTeam=null,sortKey='pct',sortDir=-1,shown=150,selP=null,L=null,Lp=null,PS={k:'name',d:1},TS={k:'acc',d:-1},XS={k:'n',d:-1};
+var B=null,A=null,sport='NBA',view='stat',win='30d',posFilter='All',q='',h2hTeam=null,sortKey='pct',sortDir=-1,shown=150,selP=null,teamFilter=null,L=null,Lp=null,PS={k:'name',d:1},TS={k:'acc',d:-1},XS={k:'n',d:-1};
 var VIEWS=[['stat','Accuracy by stat'],['pos','Accuracy by position'],['player','Accuracy by player'],['teamacc','Accuracy by team'],['teams','Team records'],['last5','Last 5 games'],['h2h','Head to head']];
 var NAMES={pts:'Points',reb:'Rebounds',ast:'Assists',pra:'Pts+Reb+Ast',fg3m:'3-pointers made',stl:'Steals',blk:'Blocks',tov:'Turnovers',minutes:'Minutes',pass_yds:'Passing yards',pass_attempts:'Pass attempts',completions:'Completions',pass_tds:'Passing TDs',interceptions:'Interceptions thrown',carries:'Carries',rush_yds:'Rushing yards',rush_tds:'Rushing TDs',targets:'Targets',receptions:'Receptions',rec_yds:'Receiving yards',rec_tds:'Receiving TDs',tackles:'Tackles',sacks:'Sacks',def_int:'Interceptions (defense)',passes_defended:'Passes defended',qb_hits:'QB hits',fgm:'Field goals made',xpm:'Extra points made',td_prob:'Anytime TD chance'};
 var ORDER={NBA:['pts','reb','ast','pra','fg3m','stl','blk','tov','minutes'],NFL:['pass_yds','completions','pass_attempts','pass_tds','interceptions','rush_yds','carries','rush_tds','rec_yds','receptions','targets','rec_tds','tackles','sacks','qb_hits','passes_defended','def_int','fgm','xpm','td_prob']};
@@ -139,16 +139,16 @@ function vPos(m){m.appendChild(el('h2',null,['Accuracy by position']));if(needA(
   s.n+=r.n;s.mae+=r.mae*r.n;s.bias+=r.bias*r.n;s.inr+=r.in_range*r.n;s.ap+=r.avg_proj*r.n;s.aa+=r.avg_actual*r.n;o.players=Math.max(o.players,r.players);o.n+=r.n;o.inr+=r.in_range*r.n});
  var list=Object.keys(g).map(function(k){return g[k]}).sort(cmp(XS,function(p,k){return k==='acc'?p.inr/p.n:(k==='pos'||k==='name')?p.pos:p.n}));
  var wrap=el('div',{'class':'poscards'});
- list.forEach(function(p){var c=el('div',{'class':'tcard'});var pl=el('button',{type:'button','class':'plink','aria-label':'See all '+p.pos+' players'},[p.pos+' →']);pl.addEventListener('click',function(){view='player';selP=null;posFilter=p.pos;q='';shown=150;render();history.replaceState(null,'','#player');window.scrollTo(0,0)});
+ list.forEach(function(p){var c=el('div',{'class':'tcard'});var pl=el('button',{type:'button','class':'plink','aria-label':'See all '+p.pos+' players'},[p.pos+' →']);pl.addEventListener('click',function(){view='player';selP=null;teamFilter=null;posFilter=p.pos;q='';shown=150;render();history.replaceState(null,'','#player');window.scrollTo(0,0)});
   c.appendChild(el('h3',null,[pl,el('span',null,[p.n+' lines'])]));
   c.appendChild(el('div',null,[el('span',{'class':'big'},[pct(p.inr/p.n*100)]),el('span',{'class':'mut'},[' of lines landed in range'])]));
   var rs=Object.keys(p.stats).sort(function(a,b){return ORDER[sport].indexOf(a)-ORDER[sport].indexOf(b)}).map(function(k){var s=p.stats[k];return [nm(k),String(s.n),'±'+f1(s.mae/s.n),sgn(s.bias/s.n,1),pct(s.inr/s.n*100)]});
   c.appendChild(table([{h:'Stat'},{h:'Lines'},{h:'Avg miss'},{h:'Bias'},{h:'In range'}],rs));wrap.appendChild(c)});
  m.appendChild(wrap)}
-function vPlayer(m){if(selP&&selP.sport===sport)return vDetail(m);selP=null;m.appendChild(el('h2',null,['Accuracy by player']));if(needA(m))return;
+function vPlayer(m){if(selP&&selP.sport===sport)return vDetail(m);selP=null;if(teamFilter){m.appendChild(btn('← Back to all teams',false,function(){teamFilter=null;view='teamacc';render();history.replaceState(null,'','#teamacc');window.scrollTo(0,0)}))}m.appendChild(el('h2',null,[teamFilter?('Players on '+teamFilter):'Accuracy by player']));if(needA(m))return;
  m.appendChild(el('p',{'class':'note'},['Season to date, players with at least 3 graded games per stat. Each chip shows average projected, then average actual, with the average miss. Green means more than 60% of games landed inside the range. Accuracy is the share of all a player’s graded lines that landed in range. Use the sort buttons or click a column heading.']));
- var by={};A.sports[sport].players.forEach(function(r){var k=r.player_id;var o=by[k]||(by[k]={sport:sport,id:r.player_id,name:r.player,pos:bucket(r.pos),team:r.team,rows:[],n:0,inr:0,ln:0});o.rows.push(r);o.n=Math.max(o.n,r.n);o.inr+=r.in_range*r.n;o.ln+=r.n});
- var all=Object.keys(by).map(function(k){return by[k]});var poss=['All'];all.forEach(function(p){if(poss.indexOf(p.pos)<0)poss.push(p.pos)});
+ var by={};A.sports[sport].players.forEach(function(r){var k=r.player_id;var o=by[k]||(by[k]={sport:sport,id:r.player_id,name:r.player,pos:bucket(r.pos),team:r.team||'?',rows:[],n:0,inr:0,ln:0});o.rows.push(r);o.n=Math.max(o.n,r.n);o.inr+=r.in_range*r.n;o.ln+=r.n});
+ var all=Object.keys(by).map(function(k){return by[k]}).filter(function(p){return !teamFilter||p.team===teamFilter});var poss=['All'];all.forEach(function(p){if(poss.indexOf(p.pos)<0)poss.push(p.pos)});
  var bar=el('div',{'class':'btnrow small'});poss.forEach(function(p){bar.appendChild(btn(p,posFilter===p,function(){posFilter=p;shown=150;render()}))});m.appendChild(bar);
  m.appendChild(sortBar([['name','Name A–Z'],['acc','Accuracy'],['pos','Position'],['team','Team']],PS,function(k){setSort(PS,k);render()}));
  var inp=el('input',{type:'search',id:'pq',placeholder:'Search player or team',value:q,'aria-label':'Search player or team'});m.appendChild(inp);
@@ -162,11 +162,11 @@ function vPlayer(m){if(selP&&selP.sport===sport)return vDetail(m);selP=null;m.ap
   if(list.length>shown)box.appendChild(btn('Show more',false,function(){shown+=150;draw()}))}
  inp.addEventListener('input',function(){q=inp.value;shown=150;draw()});draw()}
 function vTeamAcc(m){m.appendChild(el('h2',null,['Accuracy by team']));if(needA(m))return;
- m.appendChild(el('p',{'class':'note'},['Season to date. Accuracy is how often the real stat landed inside the projected range, across every graded player line for that team. Use the sort buttons or click a column heading.']));
+ m.appendChild(el('p',{'class':'note'},['Season to date. Accuracy is how often the real stat landed inside the projected range, across every graded player line for that team. Click a team to see its players, then click a player for their game log. Use the sort buttons or click a column heading.']));
  var by={};A.sports[sport].players.forEach(function(r){var t=r.team||'?';var o=by[t]||(by[t]={tm:t,ids:{},n:0,inr:0});o.ids[r.player_id]=1;o.n+=r.n;o.inr+=r.in_range*r.n});
  var list=Object.keys(by).map(function(k){var o=by[k];o.pl=Object.keys(o.ids).length;o.acc=o.n?o.inr/o.n:0;return o}).sort(cmp(TS,function(t,k){return k==='name'?t.tm:t[k]}));
  m.appendChild(sortBar([['acc','Accuracy'],['pl','Players'],['n','Graded lines'],['tm','Team A–Z']],TS,function(k){setSort(TS,k);render()}));
- m.appendChild(table([{h:'Team',sort:'tm'},{h:'Players',sort:'pl'},{h:'Graded lines',sort:'n'},{h:'Accuracy',sort:'acc'}],list.map(function(t){return [t.tm,String(t.pl),String(t.n),inr(t.acc)]}),{sortKey:TS.k,sortDir:TS.d,onSort:function(k){setSort(TS,k);render()}}))}
+ m.appendChild(table([{h:'Team',sort:'tm'},{h:'Players',sort:'pl'},{h:'Graded lines',sort:'n'},{h:'Accuracy',sort:'acc'}],list.map(function(t){var tb=el('button',{type:'button','class':'plink','aria-label':'See all '+t.tm+' players'},[t.tm+' →']);tb.addEventListener('click',function(){view='player';selP=null;teamFilter=t.tm;posFilter='All';q='';shown=150;PS.k='acc';PS.d=-1;render();history.replaceState(null,'','#player');window.scrollTo(0,0)});return [tb,String(t.pl),String(t.n),inr(t.acc)]}),{sortKey:TS.k,sortDir:TS.d,onSort:function(k){setSort(TS,k);render()}}))}
 function needL(){if(!Lp)Lp=fetch('data/playerlogs.json?'+Date.now()).then(function(r){return r.ok?r.json():null}).catch(function(){return null}).then(function(x){L=x;return x});return Lp}
 var LCOLS={NBA:[['minutes','MIN'],['pts','PTS'],['reb','REB'],['ast','AST'],['pra','PRA'],['fg3m','3PM'],['stl','STL'],['blk','BLK'],['tov','TOV']]};
 function gdate(d){var t=new Date(d+'T12:00:00');return isNaN(t)?d:t.toLocaleDateString('en-US',t.getFullYear()===new Date().getFullYear()?{month:'short',day:'numeric'}:{month:'short',day:'numeric',year:'numeric'})}
@@ -207,8 +207,8 @@ function vH2H(m){var T=buildTeams(sport),names=Object.keys(T.teams).sort();if(!h
  var rows=opps.map(function(o){var h=t.h2h[o],ps=el('span');h.games.forEach(function(g){ps.appendChild(pill(g.w,(g.w?'W ':'L ')+g.pf+'-'+g.pa+' '+(g.ha==='H'?'home':g.ha==='A'?'away':'neutral')+(g.po?' PO':'')));ps.appendChild(document.createTextNode(' '))});return [o,h.w+'-'+h.l,ps]});
  m.appendChild(el('p',{'class':'note'},[h2hTeam+' is '+t.W+'-'+t.L+' this season.']));var tb=table([{h:'Opponent'},{h:'Record'},{h:'Meetings, newest first'}],rows);tb.querySelectorAll('td:last-child').forEach(function(td){td.style.textAlign='left'});m.appendChild(tb)}
 var R={stat:vStat,pos:vPos,player:vPlayer,teamacc:vTeamAcc,teams:vTeams,last5:vLast5,h2h:vH2H};
-function render(){var sb=document.getElementById('sportBtns');sb.innerHTML='';['NBA','NFL'].forEach(function(s){sb.appendChild(btn(s,sport===s,function(){sport=s;selP=null;posFilter='All';h2hTeam=null;shown=150;render()}))});
- var vb=document.getElementById('viewBtns');vb.innerHTML='';VIEWS.forEach(function(v){vb.appendChild(btn(v[1],view===v[0],function(){view=v[0];selP=null;render();history.replaceState(null,'','#'+v[0])}))});
+function render(){var sb=document.getElementById('sportBtns');sb.innerHTML='';['NBA','NFL'].forEach(function(s){sb.appendChild(btn(s,sport===s,function(){sport=s;selP=null;teamFilter=null;posFilter='All';h2hTeam=null;shown=150;render()}))});
+ var vb=document.getElementById('viewBtns');vb.innerHTML='';VIEWS.forEach(function(v){vb.appendChild(btn(v[1],view===v[0],function(){view=v[0];selP=null;teamFilter=null;render();history.replaceState(null,'','#'+v[0])}))});
  var m=document.getElementById('main');m.innerHTML='';R[view](m)}
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&selP){selP=null;render()}});
 var hh=location.hash.slice(1);if(R[hh])view=hh;
