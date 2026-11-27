@@ -139,7 +139,8 @@ function vPos(m){m.appendChild(el('h2',null,['Accuracy by position']));if(needA(
   s.n+=r.n;s.mae+=r.mae*r.n;s.bias+=r.bias*r.n;s.inr+=r.in_range*r.n;s.ap+=r.avg_proj*r.n;s.aa+=r.avg_actual*r.n;o.players=Math.max(o.players,r.players);o.n+=r.n;o.inr+=r.in_range*r.n});
  var list=Object.keys(g).map(function(k){return g[k]}).sort(cmp(XS,function(p,k){return k==='acc'?p.inr/p.n:(k==='pos'||k==='name')?p.pos:p.n}));
  var wrap=el('div',{'class':'poscards'});
- list.forEach(function(p){var c=el('div',{'class':'tcard'});c.appendChild(el('h3',null,[p.pos,el('span',null,[p.n+' lines'])]));
+ list.forEach(function(p){var c=el('div',{'class':'tcard'});var pl=el('button',{type:'button','class':'plink','aria-label':'See all '+p.pos+' players'},[p.pos+' →']);pl.addEventListener('click',function(){view='player';selP=null;posFilter=p.pos;q='';shown=150;render();history.replaceState(null,'','#player');window.scrollTo(0,0)});
+  c.appendChild(el('h3',null,[pl,el('span',null,[p.n+' lines'])]));
   c.appendChild(el('div',null,[el('span',{'class':'big'},[pct(p.inr/p.n*100)]),el('span',{'class':'mut'},[' of lines landed in range'])]));
   var rs=Object.keys(p.stats).sort(function(a,b){return ORDER[sport].indexOf(a)-ORDER[sport].indexOf(b)}).map(function(k){var s=p.stats[k];return [nm(k),String(s.n),'±'+f1(s.mae/s.n),sgn(s.bias/s.n,1),pct(s.inr/s.n*100)]});
   c.appendChild(table([{h:'Stat'},{h:'Lines'},{h:'Avg miss'},{h:'Bias'},{h:'In range'}],rs));wrap.appendChild(c)});
