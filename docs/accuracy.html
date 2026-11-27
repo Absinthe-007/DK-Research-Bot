@@ -57,6 +57,8 @@ tr:last-child td{border-bottom:0}
 .line{display:inline-flex;gap:6px;align-items:center;border-radius:8px;padding:3px 8px;font-size:13px;margin:2px 4px 2px 0;background:var(--chip)}
 .line.in{background:var(--good-bg)} .line.out{background:var(--bad-bg)}
 input[type=search]{font:inherit;padding:8px 12px;border:1px solid var(--line);border-radius:999px;background:var(--card);color:var(--ink);min-width:200px}
+.plink{border:0;background:none;padding:0;color:var(--accent);font-weight:700;font-size:inherit;border-radius:4px;text-align:left}
+.plink:hover{text-decoration:underline}
 .poscards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
 .big{font-family:var(--display);font-size:42px;line-height:1}
 .kpis{display:flex;flex-wrap:wrap;gap:16px}
@@ -79,13 +81,13 @@ input[type=search]{font:inherit;padding:8px 12px;border:1px solid var(--line);bo
 </div>
 <script>
 (function(){
-var B=null,A=null,sport='NBA',view='stat',win='30d',posFilter='All',q='',h2hTeam=null,sortKey='pct',sortDir=-1,shown=150,PS={k:'name',d:1},TS={k:'acc',d:-1},XS={k:'n',d:-1};
+var B=null,A=null,sport='NBA',view='stat',win='30d',posFilter='All',q='',h2hTeam=null,sortKey='pct',sortDir=-1,shown=150,selP=null,L=null,Lp=null,PS={k:'name',d:1},TS={k:'acc',d:-1},XS={k:'n',d:-1};
 var VIEWS=[['stat','Accuracy by stat'],['pos','Accuracy by position'],['player','Accuracy by player'],['teamacc','Accuracy by team'],['teams','Team records'],['last5','Last 5 games'],['h2h','Head to head']];
 var NAMES={pts:'Points',reb:'Rebounds',ast:'Assists',pra:'Pts+Reb+Ast',fg3m:'3-pointers made',stl:'Steals',blk:'Blocks',tov:'Turnovers',minutes:'Minutes',pass_yds:'Passing yards',pass_attempts:'Pass attempts',completions:'Completions',pass_tds:'Passing TDs',interceptions:'Interceptions thrown',carries:'Carries',rush_yds:'Rushing yards',rush_tds:'Rushing TDs',targets:'Targets',receptions:'Receptions',rec_yds:'Receiving yards',rec_tds:'Receiving TDs',tackles:'Tackles',sacks:'Sacks',def_int:'Interceptions (defense)',passes_defended:'Passes defended',qb_hits:'QB hits',fgm:'Field goals made',xpm:'Extra points made',td_prob:'Anytime TD chance'};
 var ORDER={NBA:['pts','reb','ast','pra','fg3m','stl','blk','tov','minutes'],NFL:['pass_yds','completions','pass_attempts','pass_tds','interceptions','rush_yds','carries','rush_tds','rec_yds','receptions','targets','rec_tds','tackles','sacks','qb_hits','passes_defended','def_int','fgm','xpm','td_prob']};
 var HEAD={NBA:['pts','reb','ast','pra'],NFL:['pass_yds','rush_yds','rec_yds','receptions']};
 function nm(k){return NAMES[k]||k}
-function el(t,a,c){var e=document.createElement(t);if(a)for(var k in a){if(k==='class')e.className=a[k];else e.setAttribute(k,a[k])}(c||[]).forEach(function(x){e.appendChild(typeof x==='string'?document.createTextNode(x):x)});return e}
+function el(t,a,c){var e=document.createElement(t);if(a)for(var k in a){if(k==='class')e.className=a[k];else e.setAttribute(k,a[k])}(c||[]).forEach(function(x){e.appendChild(x instanceof Node?x:document.createTextNode(x==null?'':String(x)))});return e}
 function f1(x){return (Math.round(x*10)/10).toFixed(1)}function f2(x){return (Math.round(x*100)/100).toFixed(2)}
 function sgn(x,d){var v=d===2?f2(x):f1(x);return (x>0?'+':'')+v}function pct(x){return Math.round(x)+'%'}
 function btn(l,on,fn){var b=el('button',{type:'button','class':on?'on':''},[l]);b.addEventListener('click',fn);return b}
@@ -142,9 +144,9 @@ function vPos(m){m.appendChild(el('h2',null,['Accuracy by position']));if(needA(
   var rs=Object.keys(p.stats).sort(function(a,b){return ORDER[sport].indexOf(a)-ORDER[sport].indexOf(b)}).map(function(k){var s=p.stats[k];return [nm(k),String(s.n),'±'+f1(s.mae/s.n),sgn(s.bias/s.n,1),pct(s.inr/s.n*100)]});
   c.appendChild(table([{h:'Stat'},{h:'Lines'},{h:'Avg miss'},{h:'Bias'},{h:'In range'}],rs));wrap.appendChild(c)});
  m.appendChild(wrap)}
-function vPlayer(m){m.appendChild(el('h2',null,['Accuracy by player']));if(needA(m))return;
+function vPlayer(m){if(selP&&selP.sport===sport)return vDetail(m);selP=null;m.appendChild(el('h2',null,['Accuracy by player']));if(needA(m))return;
  m.appendChild(el('p',{'class':'note'},['Season to date, players with at least 3 graded games per stat. Each chip shows average projected, then average actual, with the average miss. Green means more than 60% of games landed inside the range. Accuracy is the share of all a player’s graded lines that landed in range. Use the sort buttons or click a column heading.']));
- var by={};A.sports[sport].players.forEach(function(r){var k=r.player_id;var o=by[k]||(by[k]={name:r.player,pos:bucket(r.pos),team:r.team,rows:[],n:0,inr:0,ln:0});o.rows.push(r);o.n=Math.max(o.n,r.n);o.inr+=r.in_range*r.n;o.ln+=r.n});
+ var by={};A.sports[sport].players.forEach(function(r){var k=r.player_id;var o=by[k]||(by[k]={sport:sport,id:r.player_id,name:r.player,pos:bucket(r.pos),team:r.team,rows:[],n:0,inr:0,ln:0});o.rows.push(r);o.n=Math.max(o.n,r.n);o.inr+=r.in_range*r.n;o.ln+=r.n});
  var all=Object.keys(by).map(function(k){return by[k]});var poss=['All'];all.forEach(function(p){if(poss.indexOf(p.pos)<0)poss.push(p.pos)});
  var bar=el('div',{'class':'btnrow small'});poss.forEach(function(p){bar.appendChild(btn(p,posFilter===p,function(){posFilter=p;shown=150;render()}))});m.appendChild(bar);
  m.appendChild(sortBar([['name','Name A–Z'],['acc','Accuracy'],['pos','Position'],['team','Team']],PS,function(k){setSort(PS,k);render()}));
@@ -152,7 +154,8 @@ function vPlayer(m){m.appendChild(el('h2',null,['Accuracy by player']));if(needA
  var box=el('div');m.appendChild(box);
  function draw(){box.innerHTML='';var ql=q.toLowerCase();var list=all.filter(function(p){return (posFilter==='All'||p.pos===posFilter)&&(!ql||(p.name+' '+p.team).toLowerCase().indexOf(ql)>=0)}).sort(cmp(PS,function(p,k){return k==='acc'?(p.ln?p.inr/p.ln:0):p[k]}));
   var rows=list.slice(0,shown).map(function(p){var ls=el('div');p.rows.sort(function(a,b){return ORDER[sport].indexOf(a.stat)-ORDER[sport].indexOf(b.stat)}).forEach(function(r){ls.appendChild(el('span',{'class':'line '+(r.in_range>=0.6?'in':'out')},[el('b',null,[nm(r.stat)]),f1(r.avg_proj)+' → '+f1(r.avg_actual),el('span',{'class':'mut'},['±'+f1(r.mae)+' · '+r.n+'g · '+pct(r.in_range*100)])]))});
-   return [el('span',null,[el('b',null,[p.name]),' ',el('span',{'class':'mut'},[p.team])]),p.pos,inr(p.ln?p.inr/p.ln:0),ls]});
+   var pb=el('button',{type:'button','class':'plink','aria-label':'Open game log for '+p.name},[p.name]);pb.addEventListener('click',function(){selP=p;render();window.scrollTo(0,0)});
+   return [el('span',null,[pb,' ',el('span',{'class':'mut'},[p.team])]),p.pos,inr(p.ln?p.inr/p.ln:0),ls]});
   box.appendChild(el('p',{'class':'note'},[list.length+' players'+(list.length>shown?' (showing '+shown+')':'')]));
   var t=table([{h:'Player',sort:'name'},{h:'Pos',sort:'pos'},{h:'Accuracy',sort:'acc'},{h:'Season accuracy by stat'}],rows,{sortKey:PS.k,sortDir:PS.d,onSort:function(k){setSort(PS,k);render()}});t.querySelectorAll('td:last-child').forEach(function(td){td.style.textAlign='left';td.style.whiteSpace='normal'});box.appendChild(t);
   if(list.length>shown)box.appendChild(btn('Show more',false,function(){shown+=150;draw()}))}
@@ -163,6 +166,31 @@ function vTeamAcc(m){m.appendChild(el('h2',null,['Accuracy by team']));if(needA(
  var list=Object.keys(by).map(function(k){var o=by[k];o.pl=Object.keys(o.ids).length;o.acc=o.n?o.inr/o.n:0;return o}).sort(cmp(TS,function(t,k){return k==='name'?t.tm:t[k]}));
  m.appendChild(sortBar([['acc','Accuracy'],['pl','Players'],['n','Graded lines'],['tm','Team A–Z']],TS,function(k){setSort(TS,k);render()}));
  m.appendChild(table([{h:'Team',sort:'tm'},{h:'Players',sort:'pl'},{h:'Graded lines',sort:'n'},{h:'Accuracy',sort:'acc'}],list.map(function(t){return [t.tm,String(t.pl),String(t.n),inr(t.acc)]}),{sortKey:TS.k,sortDir:TS.d,onSort:function(k){setSort(TS,k);render()}}))}
+function needL(){if(!Lp)Lp=fetch('data/playerlogs.json?'+Date.now()).then(function(r){return r.ok?r.json():null}).catch(function(){return null}).then(function(x){L=x;return x});return Lp}
+var LCOLS={NBA:[['minutes','MIN'],['pts','PTS'],['reb','REB'],['ast','AST'],['pra','PRA'],['fg3m','3PM'],['stl','STL'],['blk','BLK'],['tov','TOV']]};
+function gdate(d){var t=new Date(d+'T12:00:00');return isNaN(t)?d:t.toLocaleDateString('en-US',t.getFullYear()===new Date().getFullYear()?{month:'short',day:'numeric'}:{month:'short',day:'numeric',year:'numeric'})}
+function gameTable(rows){
+ var cols=LCOLS[sport];if(!cols){cols=ORDER.NFL.filter(function(k){return rows.some(function(g){return g.s[k]})}).map(function(k){return [k,nm(k)]})}
+ var body=rows.map(function(g){return [gdate(g.d),(g.h?'vs ':'@ ')+g.o,pill(g.pf>g.pa,(g.pf>g.pa?'W ':'L ')+g.pf+'-'+g.pa)].concat(cols.map(function(c){var v=g.s[c[0]]||0;return String(sport==='NBA'&&c[0]==='minutes'?Math.round(v):v)}))});
+ var avg=['Average','',''].concat(cols.map(function(c){return f1(rows.reduce(function(a,g){return a+(g.s[c[0]]||0)},0)/rows.length)}));
+ body.push(avg);
+ return table([{h:'Date'},{h:'Opp'},{h:'Result'}].concat(cols.map(function(c){return {h:c[1]}})),body)}
+function vDetail(m){var p=selP;
+ var back=btn('← Back to all players',false,function(){selP=null;render()});m.appendChild(back);
+ m.appendChild(el('h2',null,[p.name+' ',el('span',{'class':'mut'},[p.team+' · '+p.pos])]));
+ var lines=el('div');p.rows.sort(function(a,b){return ORDER[sport].indexOf(a.stat)-ORDER[sport].indexOf(b.stat)}).forEach(function(r){lines.appendChild(el('span',{'class':'line '+(r.in_range>=0.6?'in':'out')},[el('b',null,[nm(r.stat)]),f1(r.avg_proj)+' → '+f1(r.avg_actual),el('span',{'class':'mut'},['±'+f1(r.mae)+' · '+r.n+'g · '+pct(r.in_range*100)])]))});
+ m.appendChild(lines);
+ var box=el('div',{'class':'card','style':'border:0;padding:0'},[el('p',{'class':'note'},['Loading game log'])]);m.appendChild(box);
+ needL().then(function(){if(selP!==p||view!=='player')return;box.innerHTML='';
+  var D=L&&L.sports&&L.sports[sport]&&L.sports[sport][String(p.id)];
+  if(!D){box.appendChild(el('p',{'class':'note'},['No game log is published for this player yet. It appears after the next pipeline run.']));return}
+  var nx=D.nx;
+  box.appendChild(el('p',{'class':'note'},[nx?('Next game: '+(nx.h?'vs ':'@ ')+nx.o+', '+new Date(nx.d).toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})):'No upcoming game is scheduled right now.']));
+  box.appendChild(el('h2',null,['Last 5 games']));
+  box.appendChild(D.l5.length?gameTable(D.l5):el('p',{'class':'note'},['No recent games.']));
+  if(nx){box.appendChild(el('h2',null,['Last 5 against '+nx.o]));
+   box.appendChild(D.vs.length?gameTable(D.vs):el('p',{'class':'note'},[p.name+' has not played '+nx.o+' in the games the site keeps.']))}
+ })}
 function tl(){var T=buildTeams(sport),arr=Object.keys(T.teams).map(function(k){var t=T.teams[k],g=t.W+t.L;return Object.assign({tm:k,g:g,pct:g?t.W/g:0,l5pct:t.l5[0]/Math.max(1,t.l5[0]+t.l5[1])},t)}).filter(function(t){return t.g>0});
  arr.sort(function(a,b){var x=a[sortKey],y=b[sortKey];if(typeof x==='string')return sortDir*x.localeCompare(y);return sortDir*((x==null?-99:x)-(y==null?-99:y))});return arr}
 function vTeams(m){var T=buildTeams(sport);m.appendChild(el('h2',null,['Team records']));
@@ -178,9 +206,10 @@ function vH2H(m){var T=buildTeams(sport),names=Object.keys(T.teams).sort();if(!h
  var rows=opps.map(function(o){var h=t.h2h[o],ps=el('span');h.games.forEach(function(g){ps.appendChild(pill(g.w,(g.w?'W ':'L ')+g.pf+'-'+g.pa+' '+(g.ha==='H'?'home':g.ha==='A'?'away':'neutral')+(g.po?' PO':'')));ps.appendChild(document.createTextNode(' '))});return [o,h.w+'-'+h.l,ps]});
  m.appendChild(el('p',{'class':'note'},[h2hTeam+' is '+t.W+'-'+t.L+' this season.']));var tb=table([{h:'Opponent'},{h:'Record'},{h:'Meetings, newest first'}],rows);tb.querySelectorAll('td:last-child').forEach(function(td){td.style.textAlign='left'});m.appendChild(tb)}
 var R={stat:vStat,pos:vPos,player:vPlayer,teamacc:vTeamAcc,teams:vTeams,last5:vLast5,h2h:vH2H};
-function render(){var sb=document.getElementById('sportBtns');sb.innerHTML='';['NBA','NFL'].forEach(function(s){sb.appendChild(btn(s,sport===s,function(){sport=s;posFilter='All';h2hTeam=null;shown=150;render()}))});
- var vb=document.getElementById('viewBtns');vb.innerHTML='';VIEWS.forEach(function(v){vb.appendChild(btn(v[1],view===v[0],function(){view=v[0];render();history.replaceState(null,'','#'+v[0])}))});
+function render(){var sb=document.getElementById('sportBtns');sb.innerHTML='';['NBA','NFL'].forEach(function(s){sb.appendChild(btn(s,sport===s,function(){sport=s;selP=null;posFilter='All';h2hTeam=null;shown=150;render()}))});
+ var vb=document.getElementById('viewBtns');vb.innerHTML='';VIEWS.forEach(function(v){vb.appendChild(btn(v[1],view===v[0],function(){view=v[0];selP=null;render();history.replaceState(null,'','#'+v[0])}))});
  var m=document.getElementById('main');m.innerHTML='';R[view](m)}
+document.addEventListener('keydown',function(e){if(e.key==='Escape'&&selP){selP=null;render()}});
 var hh=location.hash.slice(1);if(R[hh])view=hh;
 var bp=fetch('data/board.json?'+Date.now()).then(function(r){return r.json()});
 var ap=fetch('data/accuracy.json?'+Date.now()).then(function(r){return r.ok?r.json():null}).catch(function(){return null});

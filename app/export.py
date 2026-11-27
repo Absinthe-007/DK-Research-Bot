@@ -292,6 +292,80 @@ def _game_lines(rows) -> dict:
     return out
 
 
+# Per-player game logs for the click-through player page: each active player's last 5 games and their last 5 meetings
+# with the team they play next. Written to docs/data/playerlogs.json and loaded only when a name is clicked.
+NEXT_SQL = """
+SELECT g.start_time, ht.abbr h, at.abbr a
+FROM games g JOIN teams ht ON ht.id=g.home_team_id JOIN teams at ON at.id=g.away_team_id
+WHERE g.sport=:sp AND NOT g.completed AND g.season_type IN (1,2,3) AND g.start_time > now() - interval '3 hours'
+ORDER BY g.start_time
+"""
+
+NBA_LOGS_SQL = """
+SELECT l.player_id, l.game_date d, l.team_abbr tm, l.opp_abbr opp, l.is_home h,
+       l.minutes, l.pts, l.reb, l.ast, l.fg3m, l.stl, l.blk, l.tov,
+       CASE WHEN l.is_home THEN g.home_score ELSE g.away_score END pf,
+       CASE WHEN l.is_home THEN g.away_score ELSE g.home_score END pa
+FROM nba_player_gamelogs l JOIN games g ON g.id=l.game_id
+WHERE l.game_date > current_date - 800 AND g.completed AND g.season_type IN (2,3)
+ORDER BY l.player_id, l.game_date DESC
+"""
+
+NFL_LOG_STATS = ["completions", "pass_attempts", "pass_yds", "pass_tds", "interceptions", "carries", "rush_yds",
+                 "rush_tds", "targets", "receptions", "rec_yds", "rec_tds", "tackles", "sacks", "qb_hits",
+                 "passes_defended", "def_int", "fgm", "xpm"]
+NFL_LOGS_SQL = """
+SELECT l.player_id, l.game_date d, l.team_abbr tm, l.opp_abbr opp, (ht.abbr = l.team_abbr) h, %s,
+       CASE WHEN ht.abbr = l.team_abbr THEN g.home_score ELSE g.away_score END pf,
+       CASE WHEN ht.abbr = l.team_abbr THEN g.away_score ELSE g.home_score END pa
+FROM nfl_player_games l JOIN games g ON g.id=l.game_id JOIN teams ht ON ht.id=g.home_team_id
+WHERE l.game_date > current_date - 800 AND g.completed AND g.season_type IN (2,3)
+ORDER BY l.player_id, l.game_date DESC
+""" % ", ".join("l." + k for k in NFL_LOG_STATS)
+
+NBA_LOG_STATS = ["minutes", "pts", "reb", "ast", "fg3m", "stl", "blk", "tov"]
+
+
+def _log_row(r: dict, sp: str) -> dict:
+    if sp == "NBA":
+        st = {k: round(float(r[k] or 0), 1) for k in NBA_LOG_STATS}
+        st["pra"] = round(st["pts"] + st["reb"] + st["ast"], 1)
+    else:                                              # NFL: keep only the stats that are not zero
+        st = {k: round(float(r[k]), 1) for k in NFL_LOG_STATS if r[k]}
+    return {"d": str(r["d"]), "o": r["opp"], "h": 1 if r["h"] else 0, "pf": r["pf"], "pa": r["pa"], "s": st}
+
+
+async def build_playerlogs(s) -> dict:
+    out: dict = {"generated_at": datetime.now(timezone.utc).isoformat(), "sports": {}}
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=120)).date().isoformat()
+    for sp, sql in (("NBA", NBA_LOGS_SQL), ("NFL", NFL_LOGS_SQL)):
+        nxt: dict = {}
+        for r in (await s.execute(text(NEXT_SQL), {"sp": sp})).mappings().all():
+            nxt.setdefault(r["h"], {"o": r["a"], "h": 1, "d": r["start_time"].isoformat()})
+            nxt.setdefault(r["a"], {"o": r["h"], "h": 0, "d": r["start_time"].isoformat()})
+        by: dict = {}
+        for r in (await s.execute(text(sql))).mappings().all():
+            by.setdefault(r["player_id"], []).append(dict(r))
+        ids = [pid for pid, g in by.items() if str(g[0]["d"]) >= cutoff]
+        info = {r["id"]: r for r in (await s.execute(
+            text("SELECT id, full_name, position FROM players WHERE sport=:sp AND id = ANY(:ids)"),
+            {"sp": sp, "ids": ids})).mappings().all()}
+        res: dict = {}
+        for pid in ids:
+            g = by[pid]
+            if pid not in info:
+                continue
+            tm = g[0]["tm"]
+            nx = nxt.get(tm)
+            res[str(pid)] = {
+                "n": info[pid]["full_name"], "t": tm, "p": info[pid]["position"], "nx": nx,
+                "l5": [_log_row(x, sp) for x in g[:5]],
+                "vs": [_log_row(x, sp) for x in g if nx and x["opp"] == nx["o"]][:5],
+            }
+        out["sports"][sp] = res
+    return out
+
+
 async def export() -> Path:
     OUT.mkdir(parents=True, exist_ok=True)
     board: dict = {"generated_at": datetime.now(timezone.utc).isoformat(), "sports": {}}
@@ -495,6 +569,12 @@ async def export() -> Path:
             (OUT / "accuracy.json").write_text(json.dumps(acc_out, separators=(",", ":"), default=str))
         except Exception as e:  # accuracy history is a bonus: never block the board
             log.warning("accuracy history skipped: %s", e)
+            await s.rollback()
+
+        try:
+            (OUT / "playerlogs.json").write_text(json.dumps(await build_playerlogs(s), separators=(",", ":"), default=str))
+        except Exception as e:  # player game logs are a bonus: never block the board
+            log.warning("player game logs skipped: %s", e)
             await s.rollback()
 
         board["last_runs"] = jsonable([
